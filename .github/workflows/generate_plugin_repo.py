@@ -53,7 +53,7 @@ def generate_plugin_repo_yaml(version: str):
         sys.exit(1)
     
     # Create the plugin repository entry
-    plugin_entry = {
+    plugin_entry = [{
         "authors": [{
             "contact": "johannes.bechberger@sap.com",
             "homepage": "https://github.com/SAP",
@@ -67,7 +67,7 @@ def generate_plugin_repo_yaml(version: str):
         "name": "java",
         "updated": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
         "version": version
-    }
+    }]
     
     # Write the YAML file
     output_file = Path("plugin-repo-entry.yml")
