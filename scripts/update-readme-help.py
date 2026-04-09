@@ -76,13 +76,12 @@ def ensure_plugin_installed() -> None:
 
 
 def get_plugin_help() -> str:
-    """Extract help text from the plugin, skipping first 3 lines."""
+    """Extract help text from the plugin."""
     print("📝 Extracting help text from plugin...")
     
     try:
-        # Use 'cf java help' to get the help text
         result = subprocess.run(
-            ["cf", "java", "help"],
+            ["cf", "help", "java"],
             capture_output=True,
             text=True
         )
@@ -90,21 +89,17 @@ def get_plugin_help() -> str:
         # Combine stdout and stderr since plugin might write to stderr
         output = result.stdout + result.stderr
         
-        # Skip first 3 lines as requested
-        lines = output.splitlines()
-        help_text = '\n'.join(lines[3:]) if len(lines) > 3 else output
-        
         # Validate that we got reasonable help text
-        if not help_text.strip():
+        if not output.strip():
             print_error("Failed to get help text from plugin")
             sys.exit(1)
         
-        # Check if it looks like actual help text (should contain USAGE or similar)
-        if "USAGE:" not in help_text and "Commands:" not in help_text:
+        # Check if it looks like actual help text
+        if "USAGE:" not in output and "NAME:" not in output:
             print_warning("Help text doesn't look like expected format")
-            print(f"Got: {help_text[:100]}...")
+            print(f"Got: {output[:200]}...")
             
-        return help_text
+        return output
         
     except (subprocess.CalledProcessError, FileNotFoundError) as e:
         print_error(f"Failed to run 'cf java help': {e}")
@@ -156,19 +151,6 @@ def update_readme_help(help_text: str) -> bool:
         # Replace the original file
         shutil.move(temp_path, readme_path)
         print_status("README.md help text updated successfully")
-        
-        # Stage changes if in git repository
-        try:
-            subprocess.run(
-                ["git", "rev-parse", "--git-dir"],
-                capture_output=True,
-                check=True
-            )
-            subprocess.run(["git", "add", "README.md"], check=True)
-            print_status("Changes staged for commit")
-        except subprocess.CalledProcessError:
-            # Not in a git repository or git command failed
-            pass
         
         return True
     else:

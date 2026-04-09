@@ -56,6 +56,7 @@ type Options struct {
 	NoDownload       bool
 	DryRun           bool
 	Verbose          bool
+	Full             bool
 	ContainerDir     string
 	LocalDir         string
 	Args             string
@@ -124,6 +125,13 @@ var flagDefinitions = []FlagDefinition{
 		Type:        "string",
 	},
 	{
+		Name:        "full",
+		ShortName:   "f",
+		Usage:       "enable `full` mode for more comprehensive analysis (status and record-status commands)",
+		Description: "enable full mode for more comprehensive JVM analysis (only for status and record-status)",
+		Type:        "bool",
+	},
+	{
 		Name:        "args",
 		ShortName:   "a",
 		Usage:       "Miscellaneous arguments to pass to the command in the container, be aware to end it with a space if it is a simple option",
@@ -164,6 +172,7 @@ func (c *JavaPlugin) parseOptions(args []string) (*Options, []string, error) {
 		NoDownload:       commandFlags.IsSet("no-download"),
 		DryRun:           commandFlags.IsSet("dry-run"),
 		Verbose:          commandFlags.IsSet("verbose"),
+		Full:             commandFlags.IsSet("full"),
 		ContainerDir:     commandFlags.String("container-dir"),
 		LocalDir:         commandFlags.String("local-dir"),
 		Args:             commandFlags.String("args"),
@@ -286,6 +295,12 @@ type Command struct {
 	// Run the command in a subfolder of the container
 	GenerateArbitraryFiles           bool
 	GenerateArbitraryFilesFolderName string
+	// IsLocal indicates the command runs locally (not via SSH)
+	IsLocal bool
+	// AcceptsTrailingArgs indicates the command accepts positional arguments after the app name
+	AcceptsTrailingArgs bool
+	// SupportFullOption indicates the command supports the --full flag
+	SupportFullOption bool
 }
 
 // HasMiscArgs checks whether the SSHCommand contains @ARGS
@@ -595,6 +610,27 @@ fi`,
 		GenerateFiles:          false,
 		SSHCommand:             `$ASPROF_COMMAND status $(pidof java)`,
 	},
+	{
+		Name:              "status",
+		Description:       "Quick status check of the remote JVM: deadlock detection, hot threads, dependency graph, and more. Requires Java 17+ locally. Use --full for comprehensive analysis. Pass additional options via --args (e.g., '--dumps 3'). See https://github.com/parttimenerd/jstall",
+		IsLocal:           true,
+		SupportFullOption: true,
+		SSHCommand:        "status all @ARGS",
+	},
+	{
+		Name:        "jstall",
+		Description: "Inspect the remote JVM via JStall (runs on your machine, connects via cf ssh). Requires Java 17+ locally. Pass jstall subcommands and options via --args (default: 'status all'). See https://github.com/parttimenerd/jstall",
+		IsLocal:     true,
+		SSHCommand:  "@ARGS",
+	},
+	{
+		Name:                "record-status",
+		Description:         "Record diagnostic data from the remote JVM via JStall and save to a local zip file. Requires Java 17+ locally. Output file can be specified as a trailing argument (default: APP_NAME-status.zip). Use --full for comprehensive recording. See https://github.com/parttimenerd/jstall",
+		IsLocal:             true,
+		AcceptsTrailingArgs: true,
+		SupportFullOption:   true,
+		SSHCommand:          "record all --output @ARGS",
+	},
 }
 
 func (c *JavaPlugin) execute(_ plugin.CliConnection, args []string) (string, error) {
@@ -699,9 +735,13 @@ func (c *JavaPlugin) execute(_ plugin.CliConnection, args []string) (string, err
 		c.logVerbosef("Command %s does not support --args flag", command.Name)
 		return "", &InvalidUsageError{message: fmt.Sprintf("The flag %q is not supported for %s", "args", command.Name)}
 	}
+	if options.Full && !command.SupportFullOption {
+		c.logVerbosef("Command %s does not support --full flag", command.Name)
+		return "", &InvalidUsageError{message: fmt.Sprintf("The flag %q is not supported for %s", "full", command.Name)}
+	}
 	if argumentLen == 1 {
 		return "", &InvalidUsageError{message: "No application name provided"}
-	} else if argumentLen > 2 {
+	} else if argumentLen > 2 && !command.AcceptsTrailingArgs {
 		return "", &InvalidUsageError{message: fmt.Sprintf("Too many arguments provided: %v", strings.Join(arguments[2:], ", "))}
 	}
 
@@ -726,6 +766,39 @@ func (c *JavaPlugin) execute(_ plugin.CliConnection, args []string) (string, err
 	}
 
 	c.logVerbosef("Required tools check passed")
+
+	if command.IsLocal {
+		c.logVerbosef("Executing local command: %s", command.Name)
+		jstallArgs := options.Args
+		switch {
+		case command.SSHCommand == "@ARGS":
+			// Generic jstall passthrough: --args is forwarded verbatim; no default subcommand.
+			// jstallArgs is already set from options.Args (empty = invoke jstall with no subcommand)
+		case command.AcceptsTrailingArgs:
+			// Commands like record-status: trailing positional arg is output file, --args are extra flags
+			trailingArg := ""
+			if argumentLen > 2 {
+				trailingArg = strings.Join(arguments[2:], " ")
+			}
+			if trailingArg == "" {
+				trailingArg = applicationName + "-status.zip"
+			}
+			jstallArgs = strings.ReplaceAll(command.SSHCommand, "@ARGS", trailingArg)
+			if options.Args != "" {
+				jstallArgs += " " + options.Args
+			}
+		default:
+			// Templated commands like status: replace @ARGS with --args value (may be empty)
+			jstallArgs = strings.ReplaceAll(command.SSHCommand, "@ARGS", options.Args)
+			// Trim trailing whitespace from empty @ARGS substitution
+			jstallArgs = strings.TrimRight(jstallArgs, " ")
+		}
+		if options.Full {
+			jstallArgs += " --full"
+			jstallArgs = strings.TrimLeft(jstallArgs, " ")
+		}
+		return c.executeJstall(applicationName, jstallArgs, options.AppInstanceIndex, options.DryRun)
+	}
 
 	remoteCommandTokens := []string{JavaDetectionCommand}
 
@@ -941,18 +1014,25 @@ func (c *JavaPlugin) GetMetadata() plugin.PluginMetadata {
 	usageText := "cf java COMMAND APP_NAME [options]"
 	for _, command := range commands {
 		usageText += "\n\n     " + command.Name
-		if command.OnlyOnRecentSapMachine || command.HasMiscArgs() {
-			usageText += " ("
-			if command.OnlyOnRecentSapMachine {
-				usageText += "recent SapMachine only"
-			}
-			if command.HasMiscArgs() {
-				if command.OnlyOnRecentSapMachine {
-					usageText += ", "
-				}
-				usageText += "supports --args"
-			}
-			usageText += ")"
+		var annotations []string
+		if command.IsLocal {
+			annotations = append(annotations, "requires Java 17+ locally")
+		}
+		if command.OnlyOnRecentSapMachine {
+			annotations = append(annotations, "recent SapMachine only")
+		}
+		var supportedFlags []string
+		if command.HasMiscArgs() {
+			supportedFlags = append(supportedFlags, "--args")
+		}
+		if command.SupportFullOption {
+			supportedFlags = append(supportedFlags, "--full")
+		}
+		if len(supportedFlags) > 0 {
+			annotations = append(annotations, "supports "+strings.Join(supportedFlags, ", "))
+		}
+		if len(annotations) > 0 {
+			usageText += " (" + strings.Join(annotations, ", ") + ")"
 		}
 		// Wrap the description with proper indentation
 		wrappedDescription := utils.WrapTextWithPrefix(command.Description, "        ", 80, 0)

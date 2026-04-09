@@ -46,14 +46,14 @@ case "$MODE" in
             local pre_markers_file="${file}.pre_markers"
             
             # Create a unique marker for each <pre> block
-            python3 "$temp_file" "$pre_markers_file" << EOF
+            python3 - "$file" "$temp_file" "$pre_markers_file" << 'EOF'
 import sys
 import re
 import json
 
-file_path = "$file"
-temp_file = sys.argv[1] if len(sys.argv) > 1 else "${file}.tmp"
-markers_file = sys.argv[2] if len(sys.argv) > 2 else "${file}.pre_markers"
+file_path = sys.argv[1]
+temp_file = sys.argv[2]
+markers_file = sys.argv[3]
 
 with open(file_path, 'r') as f:
     content = f.read()
@@ -85,13 +85,13 @@ EOF
             npx prettier --parser markdown --prose-wrap always --print-width 120 --write "$temp_file"
             
             # Restore <pre> blocks
-            python3 "$temp_file" "$pre_markers_file" "$file" << EOF
+            python3 - "$temp_file" "$pre_markers_file" "$file" << 'EOF'
 import sys
 import json
 
-temp_file = sys.argv[1] if len(sys.argv) > 1 else "${file}.tmp"
-markers_file = sys.argv[2] if len(sys.argv) > 2 else "${file}.pre_markers"
-original_file = sys.argv[3] if len(sys.argv) > 3 else "$file"
+temp_file = sys.argv[1]
+markers_file = sys.argv[2]
+original_file = sys.argv[3]
 
 with open(temp_file, 'r') as f:
     content = f.read()

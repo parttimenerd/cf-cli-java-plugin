@@ -13,6 +13,8 @@ Currently, it allows you to:
 - To run jcmd remotely on your application
 - To start, stop and retrieve JFR and [async-profiler](https://github.com/jvm-profiling-tools/async-profiler)
   ([SapMachine](https://sapmachine.io) only) profiles from your application
+- To run [jstall](https://github.com/parttimenerd/jstall) for one-shot JVM inspection (deadlock detection, hot threads,
+  dependency graphs, and more) — bundled directly in the plugin, requires Java 17+ locally
 
 ## Installation
 
@@ -150,6 +152,35 @@ JVM response code = 0
 $TIME s
 ```
 
+Running [JStall](https://github.com/parttimenerd/jstall) for quick JVM inspection (requires Java 17+ locally):
+
+```sh
+# Default: run status analysis with deadlock detection, hot threads, etc.
+> cf java jstall $APP_NAME
+
+# Run a specific jstall subcommand
+> cf java jstall $APP_NAME --args 'deadlock'
+> cf java jstall $APP_NAME --args 'most-work --dumps 3'
+> cf java jstall $APP_NAME --args 'flame'
+```
+
+Recording JVM diagnostic data for later analysis or sharing:
+
+```sh
+# Record all JVM diagnostic data into a zip file (default: APP_NAME-status.zip)
+> cf java record-status $APP_NAME
+
+# Record to a specific output file
+> cf java record-status $APP_NAME diagnostics.zip
+
+# Record with full data (including expensive jcmd commands, flame graph, and JFR)
+> cf java record-status $APP_NAME --args '--full'
+
+# Replay the recording locally with jstall
+> jstall -f diagnostics.zip status all
+> jstall -f diagnostics.zip threads all
+```
+
 #### Variable Replacements for JCMD and Asprof Commands
 
 When using `jcmd` and `asprof` commands with the `--args` parameter, the following variables are automatically replaced
@@ -181,7 +212,6 @@ directory and downloads any files created there to your local directory (unless 
 The following is a list of all available commands (some of the SapMachine specific), generated via `cf java --help`:
 
 <pre>
-
 NAME:
    java - Obtain a heap-dump, thread-dump or profile from a running, SSH-enabled Java application.
 
@@ -274,24 +304,43 @@ USAGE:
      asprof-status (recent SapMachine only)
         Get the status of async-profiler on a running Java application
 
+     status (requires Java 17+ locally, supports --args)
+        Quick status check of the remote JVM: deadlock detection, hot threads,
+        dependency graph, and more. Requires Java 17+ locally. Pass additional
+        options via --args (e.g., '--dumps 3', '--full'). See
+        https://github.com/parttimenerd/jstall
+
+     jstall (requires Java 17+ locally, supports --args)
+        Inspect the remote JVM via JStall (runs on your machine, connects via cf
+        ssh). Requires Java 17+ locally. Pass jstall subcommands and options via
+        --args (default: 'status all'). See
+        https://github.com/parttimenerd/jstall
+
+     record-status (requires Java 17+ locally, supports --args)
+        Record diagnostic data from the remote JVM via JStall and save to a
+        local zip file. Requires Java 17+ locally. Output file can be specified
+        as a trailing argument (default: APP_NAME-status.zip). Use --args to
+        pass additional jstall record options like '--full'. See
+        https://github.com/parttimenerd/jstall
+
 OPTIONS:
-   -app-instance-index       -i [index], select to which instance of the app to connect
-   -args                     -a, Miscellaneous arguments to pass to the command (if supported) in the
+   --app-instance-index      -i [index], select to which instance of the app to connect
+   --args                    -a, Miscellaneous arguments to pass to the command (if supported) in the
                                container, be aware to end it with a space if it is a simple option. For
                                commands that create arbitrary files (jcmd, asprof), the environment
                                variables @FSPATH, @ARGS, @APP_NAME, @FILE_NAME, and @STATIC_FILE_NAME are
                                available in --args to reference the working directory path, arguments,
                                application name, and generated file name respectively.
-   -container-dir            -cd, the directory path in the container that the heap dump/JFR/... file will be
+   --container-dir           -cd, the directory path in the container that the heap dump/JFR/... file will be
                                 saved to
-   -dry-run                  -n, just output to command line what would be executed
-   -keep                     -k, keep the heap dump in the container; by default the heap dump/JFR/... will
+   --dry-run                 -n, just output to command line what would be executed
+   --keep                    -k, keep the heap dump in the container; by default the heap dump/JFR/... will
                                be deleted from the container's filesystem after being downloaded
-   -local-dir                -ld, the local directory path that the dump/JFR/... file will be saved to,
+   --local-dir               -ld, the local directory path that the dump/JFR/... file will be saved to,
                                 defaults to the current directory
-   -no-download              -nd, don't download the heap dump/JFR/... file to local, only keep it in the
+   --no-download             -nd, don't download the heap dump/JFR/... file to local, only keep it in the
                                 container, implies '--keep'
-   -verbose                  -v, enable verbose output for the plugin
+   --verbose                 -v, enable verbose output for the plugin
 
 </pre>
 
@@ -379,6 +428,17 @@ make build
 ./scripts/lint-all.sh fix
 ```
 
+### Build Configuration
+
+**JStall Version**: By default, the build downloads the latest stable JStall release. To test with the latest
+development build from GitHub Actions instead, use:
+
+```bash
+JSTALL_DEV=1 make build
+```
+
+This pulls the latest JStall build directly from the GitHub Actions artifacts instead of the released version.
+
 ### Testing
 
 **Python Tests**: Modern pytest-based test suite.
@@ -429,24 +489,7 @@ create GitHub issues for security-related doubts or problems.
 
 ## Changelog
 
-## Snapshot
-
-
-## 4.0.2
-
-### 4.0.2
-
-- Fix rare ssh connection issue
-
-### 4.0.1
-
-- Fix thread-dump command
-
-### 4.0.0
-
-- Create a proper test suite
-- Fix many bugs discovered during testing
-- Profiling and JCMD related features
+See [CHANGELOG.md](CHANGELOG.md) for a detailed list of changes.
 
 ## License
 

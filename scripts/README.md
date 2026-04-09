@@ -33,12 +33,13 @@ Go-specific linting and testing script.
 **Usage:**
 
 ```bash
-./scripts/lint-go.sh [check|test|ci]
+./scripts/lint-go.sh [check|fix|ci]
 ```
 
 **Modes:**
 
 - `check` (default): Run linting checks only
+- `fix`: Auto-fix formatting issues and run lint checks
 - `ci`: Run all checks for CI environments (lint + dependencies)
 
 **Tools used:**

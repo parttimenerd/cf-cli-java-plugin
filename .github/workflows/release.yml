@@ -105,7 +105,7 @@ jobs:
             echo "No version changes detected"
           else
             echo "Committing version update"
-            git add cf_cli_java_plugin.go README.md
+            git add cf_cli_java_plugin.go CHANGELOG.md
             git commit -m "Set version to v$VERSION"
             git push
           fi
