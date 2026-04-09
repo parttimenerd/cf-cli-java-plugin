@@ -56,6 +56,13 @@ jobs:
         with:
           go-version: ${{ matrix.go-version }}
 
+      - name: Download JStall minimal JAR for go:embed
+        shell: bash
+        run: |
+          mkdir -p dist
+          curl -fsSL -o dist/jstall-minimal.jar https://github.com/parttimenerd/jstall/releases/latest/download/jstall-minimal.jar
+          ls -lh dist/jstall-minimal.jar
+
       - name: Install dependencies
         run: go mod tidy -e || true
 
