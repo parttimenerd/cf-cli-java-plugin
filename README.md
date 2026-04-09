@@ -304,11 +304,11 @@ USAGE:
      asprof-status (recent SapMachine only)
         Get the status of async-profiler on a running Java application
 
-     status (requires Java 17+ locally, supports --args)
+     status (requires Java 17+ locally, supports --args, --full)
         Quick status check of the remote JVM: deadlock detection, hot threads,
-        dependency graph, and more. Requires Java 17+ locally. Pass additional
-        options via --args (e.g., '--dumps 3', '--full'). See
-        https://github.com/parttimenerd/jstall
+        dependency graph, and more. Requires Java 17+ locally. Use --full for
+        comprehensive analysis. Pass additional options via --args (e.g.,
+        '--dumps 3'). See https://github.com/parttimenerd/jstall
 
      jstall (requires Java 17+ locally, supports --args)
         Inspect the remote JVM via JStall (runs on your machine, connects via cf
@@ -316,12 +316,11 @@ USAGE:
         --args (default: 'status all'). See
         https://github.com/parttimenerd/jstall
 
-     record-status (requires Java 17+ locally, supports --args)
+     record-status (requires Java 17+ locally, supports --args, --full)
         Record diagnostic data from the remote JVM via JStall and save to a
         local zip file. Requires Java 17+ locally. Output file can be specified
-        as a trailing argument (default: APP_NAME-status.zip). Use --args to
-        pass additional jstall record options like '--full'. See
-        https://github.com/parttimenerd/jstall
+        as a trailing argument (default: APP_NAME-status.zip). Use --full for
+        comprehensive recording. See https://github.com/parttimenerd/jstall
 
 OPTIONS:
    --app-instance-index      -i [index], select to which instance of the app to connect
@@ -334,6 +333,8 @@ OPTIONS:
    --container-dir           -cd, the directory path in the container that the heap dump/JFR/... file will be
                                 saved to
    --dry-run                 -n, just output to command line what would be executed
+   --full                    -f, enable full mode for more comprehensive JVM analysis (only for status and
+                               record-status)
    --keep                    -k, keep the heap dump in the container; by default the heap dump/JFR/... will
                                be deleted from the container's filesystem after being downloaded
    --local-dir               -ld, the local directory path that the dump/JFR/... file will be saved to,
