@@ -4,11 +4,9 @@ Generate plugin repository YAML file for CF CLI plugin repository.
 This script creates the YAML file in the required format for the CF CLI plugin repository.
 """
 
-import os
 import sys
 import yaml
 import hashlib
-import requests
 from datetime import datetime
 from pathlib import Path
 
@@ -71,8 +69,9 @@ def generate_plugin_repo_yaml(version: str):
     
     # Write the YAML file
     output_file = Path("plugin-repo-entry.yml")
+    yaml_content = yaml.dump(plugin_entry, default_flow_style=False, sort_keys=False).replace('"', "'")
     with open(output_file, 'w') as f:
-        f.write(yaml.dump(plugin_entry, f, default_flow_style=False, sort_keys=False).replace('"', "'"))
+        f.write(yaml_content)
     
     print(f"Generated plugin repository YAML file: {output_file}")
     print(f"Version: {version}")
@@ -84,7 +83,7 @@ def generate_plugin_repo_yaml(version: str):
         f.write(f"CF CLI Java Plugin Repository Entry\n")
         f.write(f"====================================\n\n")
         f.write(f"Version: {version}\n")
-        f.write(f"Updated: {plugin_entry['updated']}\n")
+        f.write(f"Updated: {plugin_entry[0]['updated']}\n")
         f.write(f"Binaries: {len(binaries)} platforms\n\n")
         f.write("Platform checksums:\n")
         for binary in binaries:
