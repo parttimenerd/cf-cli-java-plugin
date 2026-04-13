@@ -49,6 +49,135 @@ func (e InvalidUsageError) Error() string {
 	return e.message
 }
 
+func isSSHConnectivityError(errorOutput string, err error) bool {
+	if err == nil {
+		return false
+	}
+
+	combined := strings.ToLower(err.Error() + " " + errorOutput)
+	patterns := []string{
+		"ssh not enabled",
+		"connection refused",
+		"connection reset",
+		"permission denied",
+		"authentication failed",
+		"handshake failed",
+		"one time auth code",
+		"timeout",
+		"deadline exceeded",
+		"specified application instance does not exist",
+		"of process web not found",
+		"of process web not running",
+	}
+
+	for _, pattern := range patterns {
+		if strings.Contains(combined, pattern) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// wrapSSHError analyzes SSH error messages and provides user-friendly explanations.
+func wrapSSHError(appName string, errorOutput string, err error) string {
+	errStr := err.Error() + " " + errorOutput
+	errStrLower := strings.ToLower(errStr)
+
+	if strings.Contains(errStrLower, "specified application instance does not exist") ||
+		strings.Contains(errStrLower, "of process web not found") ||
+		strings.Contains(errStrLower, "of process web not running") {
+		return fmt.Sprintf(
+			"Cannot connect to app '%s' via SSH because the requested application instance is not available.\n"+
+				"Verify the instance index with: cf app %s\n"+
+				"Technical details: %v",
+			appName,
+			appName,
+			err,
+		)
+	}
+
+	if strings.Contains(errStrLower, "connection refused") ||
+		strings.Contains(errStrLower, "connection reset") ||
+		strings.Contains(errStrLower, "ssh not enabled") {
+		return fmt.Sprintf(
+			"Cannot connect to app '%s' via SSH.\n"+
+				"Possible causes and solutions:\n"+
+				"1. SSH may not be enabled on the application. Try:\n"+
+				"   cf enable-ssh %s\n"+
+				"   cf restart %s\n"+
+				"2. Check your network connection and firewall settings.\n"+
+				"3. Verify the application is running: cf app %s\n"+
+				"Technical details: %v",
+			appName,
+			appName,
+			appName,
+			appName,
+			err,
+		)
+	}
+
+	if strings.Contains(errStrLower, "permission denied") ||
+		strings.Contains(errStrLower, "authentication failed") ||
+		strings.Contains(errStrLower, "one time auth code") ||
+		strings.Contains(errStrLower, "handshake failed") {
+		return fmt.Sprintf(
+			"SSH authentication failed for app '%s'.\n"+
+				"This may indicate:\n"+
+				"1. You are not logged in to Cloud Foundry. Try: cf login\n"+
+				"2. Your CF credentials have expired. Try: cf logout && cf login\n"+
+				"3. You don't have permissions for this app.\n"+
+				"Technical details: %v",
+			appName,
+			err,
+		)
+	}
+
+	if strings.Contains(errStrLower, "timeout") ||
+		strings.Contains(errStrLower, "deadline exceeded") {
+		return fmt.Sprintf(
+			"SSH connection to app '%s' timed out.\n"+
+				"This may indicate:\n"+
+				"1. Slow network or high latency\n"+
+				"2. Cloud Foundry platform is experiencing issues\n"+
+				"3. Firewall or proxy is blocking the connection\n"+
+				"Try again, or contact your Cloud Foundry administrator if this persists.",
+			appName,
+		)
+	}
+
+	return fmt.Sprintf(
+		"SSH command failed while connecting to app '%s'.\n"+
+			"Details: %v\n"+
+			"Output: %s\n"+
+			"To debug, try manually: cf ssh %s -c 'echo ok'",
+		appName,
+		err,
+		errorOutput,
+		appName,
+	)
+}
+
+// checkSSHConnectivity tests whether the app is reachable via SSH before running the main command.
+func (c *JavaPlugin) checkSSHConnectivity(appName string, appInstanceIndex int) error {
+	testArgs := []string{"ssh", appName}
+	if appInstanceIndex >= 0 {
+		testArgs = append(testArgs, "--app-instance-index", strconv.Itoa(appInstanceIndex))
+	}
+	testArgs = append(testArgs, "-c", "echo ok")
+
+	c.logVerbosef("Checking SSH connectivity to app '%s'", appName)
+	cmd := exec.Command("cf", testArgs...)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		c.logVerbosef("SSH connectivity check failed: %v", err)
+		return fmt.Errorf("%s", wrapSSHError(appName, string(output), err))
+	}
+
+	c.logVerbosef("SSH connectivity check succeeded")
+	return nil
+}
+
 // Options holds all command-line options for the Java plugin
 type Options struct {
 	AppInstanceIndex int
@@ -80,7 +209,7 @@ var flagDefinitions = []FlagDefinition{
 		Usage:       "application `instance` to connect to",
 		Description: "select to which instance of the app to connect",
 		Type:        "int",
-		DefaultInt:  0,
+		DefaultInt:  -1,
 	},
 	{
 		Name:        "keep",
@@ -120,7 +249,7 @@ var flagDefinitions = []FlagDefinition{
 	{
 		Name:        "local-dir",
 		ShortName:   "ld",
-		Usage:       "specify the folder where the dump/JFR/... file will be downloaded to, dump file will not be copied to local if this parameter was not set",
+		Usage:       "specify the folder where the dump/JFR/... file will be downloaded to, defaults to the current directory",
 		Description: "the local directory path that the dump/JFR/... file will be saved to, defaults to the current directory",
 		Type:        "string",
 	},
@@ -166,10 +295,36 @@ func (c *JavaPlugin) parseOptions(args []string) (*Options, []string, error) {
 		return nil, nil, parseErr
 	}
 
+	appInstanceIndex := commandFlags.Int("app-instance-index")
+	appInstanceIndexSet := commandFlags.IsSet("app-instance-index")
+	keep := commandFlags.IsSet("keep")
+	noDownload := commandFlags.IsSet("no-download")
+
+	// Validate: contradictory flags
+	if keep && noDownload {
+		return nil, nil, &InvalidUsageError{
+			message: "Error: flags '--keep' and '--no-download' are contradictory. Use '--no-download' to keep remote file without downloading, or '--keep' to download and keep a copy remote.",
+		}
+	}
+
+	// Validate: instance index must be non-negative
+	if appInstanceIndexSet && appInstanceIndex < 0 {
+		return nil, nil, &InvalidUsageError{
+			message: fmt.Sprintf("Error: app instance index must be non-negative, got %d", appInstanceIndex),
+		}
+	}
+
+	// Validate: instance index should not be excessively large (sanity check)
+	if appInstanceIndex > 9999 {
+		return nil, nil, &InvalidUsageError{
+			message: fmt.Sprintf("Error: app instance index is unreasonably large (%d). Cloud Foundry applications typically have fewer than 100 instances.", appInstanceIndex),
+		}
+	}
+
 	options := &Options{
-		AppInstanceIndex: commandFlags.Int("app-instance-index"),
-		Keep:             commandFlags.IsSet("keep"),
-		NoDownload:       commandFlags.IsSet("no-download"),
+		AppInstanceIndex: appInstanceIndex,
+		Keep:             keep,
+		NoDownload:       noDownload,
 		DryRun:           commandFlags.IsSet("dry-run"),
 		Verbose:          commandFlags.IsSet("verbose"),
 		Full:             commandFlags.IsSet("full"),
@@ -228,8 +383,9 @@ const (
 // 1 should the plugin exit nonzero.
 func (c *JavaPlugin) Run(cliConnection plugin.CliConnection, args []string) {
 	// Check if verbose flag is in args for early logging
+	// Note: -v is reserved by CF CLI (enables CF_TRACE). Only --verbose works.
 	for _, arg := range args {
-		if arg == "-v" || arg == "--verbose" {
+		if arg == "--verbose" {
 			c.verbose = true
 			break
 		}
@@ -397,7 +553,7 @@ fi`,
 		SSHCommand: `JSTACK_COMMAND=$(find -executable -name jstack | head -1);
 		JVMMON_COMMAND=$(find -executable -name jvmmon | head -1) 
 		if [ -z "${JVMMON_COMMAND}" ] && [ -z "${JSTACK_COMMAND}" ]; then
-		echo >&2 "jstack or jvmmon are required for generating heap dump, you can modify your application manifest.yaml on the 'JBP_CONFIG_OPEN_JDK_JRE' environment variable. This could be done like this:
+		echo >&2 "jstack or jvmmon are required for generating thread dump, you can modify your application manifest.yaml on the 'JBP_CONFIG_OPEN_JDK_JRE' environment variable. This could be done like this:
 				---
 				applications:
 				- name: <APP_NAME>
@@ -422,12 +578,12 @@ fi`,
 	},
 	{
 		Name:                             "jcmd",
-		Description:                      "Run a JCMD command on a running Java application via --args, downloads and deletes all files that are created in the current folder, use '--no-download' to prevent this. Environment variables available: @FSPATH (writable directory path, always set), @ARGS (command arguments), @APP_NAME (application name), @FILE_NAME (generated filename for file operations without UUID), and @STATIC_FILE_NAME (without UUID). Use single quotes around --args to prevent shell expansion.",
+		Description:                      "Run a JCMD command on a running Java application via --args, downloads and deletes all files that are created in the current folder, use '--no-download' to prevent this. Environment variables available: @FSPATH (writable directory path, always set), @ARGS (command arguments), @APP_NAME (application name), @FILE_NAME (generated filename with UUID for file operations), and @STATIC_FILE_NAME (without UUID). Use single quotes around --args to prevent shell expansion.",
 		RequiredTools:                    []string{"jcmd"},
 		GenerateFiles:                    false,
 		GenerateArbitraryFiles:           true,
 		GenerateArbitraryFilesFolderName: "jcmd",
-		SSHCommand:                       `$JCMD_COMMAND $(pidof java) @ARGS`,
+		SSHCommand:                       FilterJCMDRemoteMessage + `$JCMD_COMMAND $(pidof java) @ARGS | filter_jcmd_remote_message`,
 	},
 	{
 		Name:          "jfr-start",
@@ -444,7 +600,7 @@ fi`,
 	},
 	{
 		Name:          "jfr-start-profile",
-		Description:   "Start a Java Flight Recorder profile recording on a running Java application (stores in the container-dir))",
+		Description:   "Start a Java Flight Recorder profile recording on a running Java application (stores in the container-dir)",
 		RequiredTools: []string{"jcmd"},
 		GenerateFiles: false,
 		NeedsFileName: true,
@@ -493,7 +649,7 @@ fi`,
 		FileNamePart:  "jfr",
 		SSHCommand: FilterJCMDRemoteMessage + ` output=$($JCMD_COMMAND $(pidof java) JFR.stop name=JFR | filter_jcmd_remote_message);
 		echo "$output"; echo ""; filename=$(echo "$output" | grep /.*.jfr --only-matching);
-		if [ -z "$filename" ]; then echo "No JFR recording created"; exit 1; fi;
+		if [ -z "$filename" ]; then echo "No active JFR recording found to stop"; exit 1; fi;
 		if [ ! -f "$filename" ]; then echo "JFR recording $filename does not exist"; exit 1; fi;
 		if [ ! -s "$filename" ]; then echo "JFR recording $filename is empty"; exit 1; fi;
 		mv "$filename" @FILE_NAME;
@@ -509,7 +665,7 @@ fi`,
 		FileNamePart:  "jfr",
 		SSHCommand: FilterJCMDRemoteMessage + ` output=$($JCMD_COMMAND $(pidof java) JFR.dump name=JFR | filter_jcmd_remote_message);
 		echo "$output"; echo ""; filename=$(echo "$output" | grep /.*.jfr --only-matching);
-		if [ -z "$filename" ]; then echo "No JFR recording created"; exit 1; fi;
+		if [ -z "$filename" ]; then echo "No JFR recording found to dump"; exit 1; fi;
 		if [ ! -f "$filename" ]; then echo "JFR recording $filename does not exist"; exit 1; fi;
 		if [ ! -s "$filename" ]; then echo "JFR recording $filename is empty"; exit 1; fi;
 		cp "$filename" @FILE_NAME;
@@ -556,7 +712,7 @@ fi`,
 		NeedsFileName:          true,
 		FileExtension:          ".jfr",
 		FileNamePart:           "asprof",
-		SSHCommand:             `$ASPROF_COMMAND start $(pidof java) -e cpu -f @FILE_NAME; echo "Use 'cf java asprof-stop @APP_NAME' to copy the file to the local folder"`,
+		SSHCommand:             `$ASPROF_COMMAND start $(pidof java) -e cpu -f @FILE_NAME && echo "Use 'cf java asprof-stop @APP_NAME' to copy the file to the local folder"`,
 	},
 	{
 		Name:                   "asprof-start-wall",
@@ -567,7 +723,7 @@ fi`,
 		NeedsFileName:          true,
 		FileExtension:          ".jfr",
 		FileNamePart:           "asprof",
-		SSHCommand:             `$ASPROF_COMMAND start $(pidof java) -e wall -f @FILE_NAME; echo "Use 'cf java asprof-stop @APP_NAME' to copy the file to the local folder"`,
+		SSHCommand:             `$ASPROF_COMMAND start $(pidof java) -e wall -f @FILE_NAME && echo "Use 'cf java asprof-stop @APP_NAME' to copy the file to the local folder"`,
 	},
 	{
 		Name:                   "asprof-start-alloc",
@@ -578,7 +734,7 @@ fi`,
 		NeedsFileName:          true,
 		FileExtension:          ".jfr",
 		FileNamePart:           "asprof",
-		SSHCommand:             `$ASPROF_COMMAND start $(pidof java) -e alloc -f @FILE_NAME; echo "Use 'cf java asprof-stop @APP_NAME' to copy the file to the local folder"`,
+		SSHCommand:             `$ASPROF_COMMAND start $(pidof java) -e alloc -f @FILE_NAME && echo "Use 'cf java asprof-stop @APP_NAME' to copy the file to the local folder"`,
 	},
 	{
 		Name:                   "asprof-start-lock",
@@ -589,7 +745,7 @@ fi`,
 		NeedsFileName:          true,
 		FileExtension:          ".jfr",
 		FileNamePart:           "asprof",
-		SSHCommand:             `$ASPROF_COMMAND start $(pidof java) -e lock -f @FILE_NAME; echo "Use 'cf java asprof-stop @APP_NAME' to copy the file to the local folder"`,
+		SSHCommand:             `$ASPROF_COMMAND start $(pidof java) -e lock -f @FILE_NAME && echo "Use 'cf java asprof-stop @APP_NAME' to copy the file to the local folder"`,
 	},
 	{
 		Name:                   "asprof-stop",
@@ -598,7 +754,7 @@ fi`,
 		OnlyOnRecentSapMachine: true,
 		GenerateFiles:          true,
 		FileExtension:          ".jfr",
-		FileLabel:              "JFR recording",
+		FileLabel:              "async-profiler recording",
 		FileNamePart:           "asprof",
 		SSHCommand:             `$ASPROF_COMMAND stop $(pidof java)`,
 	},
@@ -618,10 +774,11 @@ fi`,
 		SSHCommand:        "status all @ARGS",
 	},
 	{
-		Name:        "jstall",
-		Description: "Inspect the remote JVM via JStall (runs on your machine, connects via cf ssh). Requires Java 17+ locally. Pass jstall subcommands and options via --args (default: 'status all'). See https://github.com/parttimenerd/jstall",
-		IsLocal:     true,
-		SSHCommand:  "@ARGS",
+		Name:              "jstall",
+		Description:       "Inspect the remote JVM via JStall (runs on your machine, connects via cf ssh). Requires Java 17+ locally. Subcommands typically require a target (e.g., 'all'). Pass jstall subcommands and options via --args. See https://github.com/parttimenerd/jstall",
+		IsLocal:           true,
+		SupportFullOption: true,
+		SSHCommand:        "@ARGS",
 	},
 	{
 		Name:                "record-status",
@@ -646,10 +803,6 @@ func (c *JavaPlugin) execute(_ plugin.CliConnection, args []string) (string, err
 		break
 	default:
 		return "", &InvalidUsageError{message: fmt.Sprintf("Unexpected command Name '%s' (expected : 'java')", args[0])}
-	}
-
-	if os.Getenv("CF_TRACE") == "true" {
-		return "", errors.New("the environment variable CF_TRACE is set to true. This prevents download of the dump from succeeding")
 	}
 
 	options, arguments, parseErr := c.parseOptions(args[1:])
@@ -690,23 +843,48 @@ func (c *JavaPlugin) execute(_ plugin.CliConnection, args []string) (string, err
 	c.logVerbosef("Command name: %s", commandName)
 
 	index := -1
+	lowerCommandName := strings.ToLower(commandName)
 	for i, command := range commands {
-		if command.Name == commandName {
+		if command.Name == lowerCommandName {
 			index = i
 			break
 		}
 	}
 	if index == -1 {
+		// Handle 'help' as a subcommand
+		if lowerCommandName == "help" {
+			err := exec.Command("cf", "help", "java").Run()
+			if err != nil {
+				return "", fmt.Errorf("failed to show help: %w", err)
+			}
+			return "", nil
+		}
 		avCommands := make([]string, 0, len(commands))
 		for _, command := range commands {
 			avCommands = append(avCommands, command.Name)
 		}
-		matches := utils.FuzzySearch(commandName, avCommands, 3)
+		matches := utils.FuzzySearch(lowerCommandName, avCommands, 3)
 		return "", &InvalidUsageError{message: fmt.Sprintf("Unrecognized command %q, did you mean: %s?", commandName, utils.JoinWithOr(matches))}
 	}
 
 	command := commands[index]
 	c.logVerbosef("Found command: %s - %s", command.Name, command.Description)
+
+	// Only block CF_TRACE for commands that download files (not for read-only commands like vm-version)
+	if os.Getenv("CF_TRACE") == "true" && (command.GenerateFiles || command.GenerateArbitraryFiles) {
+		return "", errors.New("the environment variable CF_TRACE is set to true. This prevents download of the dump from succeeding")
+	}
+
+	// Handle --help flag for jstall command
+	if command.Name == "jstall" {
+		for _, arg := range arguments {
+			if arg == "--help" || arg == "-h" {
+				// Delegate to jstall --help directly
+				return c.executeJstall("", "--help", 0, false)
+			}
+		}
+	}
+
 	if !command.GenerateFiles && !command.GenerateArbitraryFiles {
 		c.logVerbosef("Command does not generate files, checking for invalid file flags")
 		for _, flag := range fileFlags {
@@ -735,6 +913,11 @@ func (c *JavaPlugin) execute(_ plugin.CliConnection, args []string) (string, err
 		c.logVerbosef("Command %s does not support --args flag", command.Name)
 		return "", &InvalidUsageError{message: fmt.Sprintf("The flag %q is not supported for %s", "args", command.Name)}
 	}
+	// Validate that commands requiring @ARGS have arguments provided
+	if command.HasMiscArgs() && options.Args == "" && (command.Name == "jcmd" || command.Name == "asprof") {
+		c.logVerbosef("Command %s requires --args flag", command.Name)
+		return "", &InvalidUsageError{message: fmt.Sprintf("The command %q requires the --args flag to be set. Use 'cf java %s --help' for usage information.", command.Name, command.Name)}
+	}
 	if options.Full && !command.SupportFullOption {
 		c.logVerbosef("Command %s does not support --full flag", command.Name)
 		return "", &InvalidUsageError{message: fmt.Sprintf("The flag %q is not supported for %s", "full", command.Name)}
@@ -749,11 +932,11 @@ func (c *JavaPlugin) execute(_ plugin.CliConnection, args []string) (string, err
 	c.logVerbosef("Application name: %s", applicationName)
 
 	cfSSHArguments := []string{"ssh", applicationName}
-	if options.AppInstanceIndex > 0 {
+	if options.AppInstanceIndex >= 0 {
 		cfSSHArguments = append(cfSSHArguments, "--app-instance-index", strconv.Itoa(options.AppInstanceIndex))
 	}
-	if options.AppInstanceIndex < 0 {
-		// indexes can't be negative, so fail with an error
+	if options.AppInstanceIndex < -1 {
+		// indexes can't be negative (except -1 for default), so fail with an error
 		return "", &InvalidUsageError{message: fmt.Sprintf("Invalid application instance index %d, must be >= 0", options.AppInstanceIndex)}
 	}
 
@@ -772,13 +955,23 @@ func (c *JavaPlugin) execute(_ plugin.CliConnection, args []string) (string, err
 		jstallArgs := options.Args
 		switch {
 		case command.SSHCommand == "@ARGS":
-			// Generic jstall passthrough: --args is forwarded verbatim; no default subcommand.
-			// jstallArgs is already set from options.Args (empty = invoke jstall with no subcommand)
+			// Generic jstall passthrough: default to 'status all' if no --args provided
+			if options.Args == "" {
+				jstallArgs = "status all"
+			}
 		case command.AcceptsTrailingArgs:
 			// Commands like record-status: trailing positional arg is output file, --args are extra flags
+			// J-09: Reject more than one trailing positional argument
+			if argumentLen > 3 {
+				return "", &InvalidUsageError{message: fmt.Sprintf("%s accepts at most one trailing argument (output file), got %d", command.Name, argumentLen-2)}
+			}
 			trailingArg := ""
 			if argumentLen > 2 {
-				trailingArg = strings.Join(arguments[2:], " ")
+				trailingArg = arguments[2]
+				// J-10: Reject empty trailing argument
+				if strings.TrimSpace(trailingArg) == "" {
+					return "", &InvalidUsageError{message: fmt.Sprintf("%s trailing argument must not be empty", command.Name)}
+				}
 			}
 			if trailingArg == "" {
 				trailingArg = applicationName + "-status.zip"
@@ -794,10 +987,19 @@ func (c *JavaPlugin) execute(_ plugin.CliConnection, args []string) (string, err
 			jstallArgs = strings.TrimRight(jstallArgs, " ")
 		}
 		if options.Full {
-			jstallArgs += " --full"
-			jstallArgs = strings.TrimLeft(jstallArgs, " ")
+			// J-12: Only add --full if not already present in args to avoid duplication
+			if !strings.Contains(jstallArgs, "--full") {
+				jstallArgs += " --full"
+				jstallArgs = strings.TrimLeft(jstallArgs, " ")
+			}
 		}
 		return c.executeJstall(applicationName, jstallArgs, options.AppInstanceIndex, options.DryRun)
+	}
+
+	if !options.DryRun {
+		if err := c.checkSSHConnectivity(applicationName, options.AppInstanceIndex); err != nil {
+			return "", err
+		}
 	}
 
 	remoteCommandTokens := []string{JavaDetectionCommand}
@@ -825,12 +1027,22 @@ func (c *JavaPlugin) execute(_ plugin.CliConnection, args []string) (string, err
 	// Initialize fspath and fileName for commands that need them
 	if command.GenerateFiles || command.NeedsFileName || command.GenerateArbitraryFiles {
 		c.logVerbosef("Command requires file generation")
-		fspath, err = utils.GetAvailablePath(applicationName, remoteDir)
-		if err != nil {
-			return "", fmt.Errorf("failed to get available path: %w", err)
-		}
-		if fspath == "" {
-			return "", fmt.Errorf("no available path found for file generation")
+		if options.DryRun {
+			// In dry-run mode, use user-supplied path or /tmp without SSH validation
+			if remoteDir != "" {
+				fspath = remoteDir
+			} else {
+				fspath = "/tmp"
+			}
+			c.logVerbosef("Dry-run mode: using path %s without validation", fspath)
+		} else {
+			fspath, err = utils.GetAvailablePath(applicationName, remoteDir)
+			if err != nil {
+				return "", fmt.Errorf("failed to get available path: %w", err)
+			}
+			if fspath == "" {
+				return "", fmt.Errorf("no available path found for file generation")
+			}
 		}
 		c.logVerbosef("Available path: %s", fspath)
 
@@ -839,8 +1051,12 @@ func (c *JavaPlugin) execute(_ plugin.CliConnection, args []string) (string, err
 			c.logVerbosef("Updated path for arbitrary files: %s", fspath)
 		}
 
-		fileName = fspath + "/" + applicationName + "-" + command.FileNamePart + "-" + utils.GenerateUUID() + command.FileExtension
-		staticFileName = fspath + "/" + applicationName + command.FileNamePart + command.FileExtension
+		namePart := ""
+		if command.FileNamePart != "" {
+			namePart = "-" + command.FileNamePart
+		}
+		fileName = fspath + "/" + applicationName + namePart + "-" + utils.GenerateUUID() + command.FileExtension
+		staticFileName = fspath + "/" + applicationName + namePart + command.FileExtension
 		c.logVerbosef("Generated filename: %s", fileName)
 		c.logVerbosef("Generated static filename without UUID: %s", staticFileName)
 	}
@@ -855,7 +1071,7 @@ func (c *JavaPlugin) execute(_ plugin.CliConnection, args []string) (string, err
 
 	// For arbitrary files commands, insert mkdir and cd before the main command
 	if command.GenerateArbitraryFiles {
-		remoteCommandTokens = append(remoteCommandTokens, "mkdir -p "+fspath, "cd "+fspath, commandText)
+		remoteCommandTokens = append(remoteCommandTokens, "mkdir -p \""+fspath+"\"", "cd \""+fspath+"\"", commandText)
 		c.logVerbosef("Added directory creation and navigation before command execution")
 	} else {
 		remoteCommandTokens = append(remoteCommandTokens, commandText)
@@ -873,7 +1089,8 @@ func (c *JavaPlugin) execute(_ plugin.CliConnection, args []string) (string, err
 		c.logVerbosef("Dry-run mode enabled, returning command without execution")
 		// When printing out the entire command line for separate execution, we wrap the remote command in single quotes
 		// to prevent the shell processing it from running it in local
-		cfSSHArguments = append(cfSSHArguments, "'"+remoteCommand+"'")
+		escapedCommand := strings.ReplaceAll(remoteCommand, "'", "'\\''")
+		cfSSHArguments = append(cfSSHArguments, "'"+escapedCommand+"'")
 		return "cf " + strings.Join(cfSSHArguments, " "), nil
 	}
 
@@ -887,6 +1104,9 @@ func (c *JavaPlugin) execute(_ plugin.CliConnection, args []string) (string, err
 	outputBytes, err := cmd.CombinedOutput()
 	output := strings.TrimRight(string(outputBytes), "\n")
 	if err != nil {
+		if isSSHConnectivityError(output, err) {
+			return "", fmt.Errorf("%s", wrapSSHError(applicationName, output, err))
+		}
 		if err.Error() == "unexpected EOF" {
 			return "", fmt.Errorf("Command failed")
 		}
@@ -904,10 +1124,10 @@ func (c *JavaPlugin) execute(_ plugin.CliConnection, args []string) (string, err
 		switch command.FileExtension {
 		case ".hprof":
 			c.logVerbosef("Finding heap dump file")
-			finalFile, err = utils.FindHeapDumpFile(cfSSHArguments, fileName, fspath)
+			finalFile, err = utils.FindHeapDumpFile(cfSSHArguments, fileName, fspath, applicationName+"-"+command.FileNamePart)
 		case ".jfr":
 			c.logVerbosef("Finding JFR file")
-			finalFile, err = utils.FindJFRFile(cfSSHArguments, fileName, fspath)
+			finalFile, err = utils.FindJFRFile(cfSSHArguments, fileName, fspath, applicationName+"-"+command.FileNamePart)
 		default:
 			return "", &InvalidUsageError{message: fmt.Sprintf("Unsupported file extension %q", command.FileExtension)}
 		}
@@ -918,6 +1138,9 @@ func (c *JavaPlugin) execute(_ plugin.CliConnection, args []string) (string, err
 		} else if !noDownload {
 			c.logVerbosef("Failed to find file, error: %v", err)
 			fmt.Println("Failed to find " + command.FileLabel + " in application container")
+			if err == nil {
+				err = fmt.Errorf("failed to find %s in application container", command.FileLabel)
+			}
 			return "", err
 		}
 
@@ -934,7 +1157,11 @@ func (c *JavaPlugin) execute(_ plugin.CliConnection, args []string) (string, err
 			fmt.Println(utils.ToSentenceCase(command.FileLabel) + " file saved to: " + localFileFullPath)
 		} else {
 			c.logVerbosef("File download failed: %v", err)
-			return "", err
+			fmt.Fprintf(os.Stderr, "The %s was created successfully in the container at: %s\n", command.FileLabel, fileName)
+			fmt.Fprintf(os.Stderr, "However, downloading to local failed: %v\n", err)
+			fmt.Fprintf(os.Stderr, "The remote file is still available. Retry with:\n")
+			fmt.Fprintf(os.Stderr, "  cf ssh %s -c 'cat %s' > %s\n", applicationName, fileName, localFileFullPath)
+			return "", fmt.Errorf("download failed (remote file intact): %w", err)
 		}
 
 		if !keepAfterDownload {

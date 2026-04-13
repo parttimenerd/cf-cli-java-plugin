@@ -22,6 +22,7 @@ require (
 	github.com/cloudfoundry/bosh-utils v0.0.397 // indirect
 	github.com/cppforlife/go-patch v0.1.0 // indirect
 	github.com/fatih/color v1.18.0 // indirect
+	github.com/google/shlex v0.0.0-20191202100458-e7afc7fbc510 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/jessevdk/go-flags v1.6.1 // indirect
 	github.com/kr/pretty v0.3.1 // indirect

@@ -17,6 +17,8 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+
+	"github.com/google/shlex"
 )
 
 //go:embed dist/jstall-minimal.jar
@@ -182,15 +184,24 @@ func (c *JavaPlugin) executeJstall(appName string, jstallArgs string, appInstanc
 	c.logVerbosef("JStall JAR at: %s", jarPath)
 
 	args := []string{"-jar", jarPath}
+
+	// Build SSH command with PATH setup so jps/jcmd are discoverable on remote container
+	// SAP Java Buildpack puts JDK tools at deep paths not on $PATH
+	pathSetup := `JDK_BIN=$(dirname "$(find . -executable -name jps 2>/dev/null | head -1)" 2>/dev/null); if [ -n "$JDK_BIN" ]; then export PATH="$JDK_BIN:$PATH"; fi;`
 	sshCmd := "cf ssh " + appName
-	if appInstanceIndex > 0 {
+	if appInstanceIndex != -1 {
 		sshCmd += " --app-instance-index " + strconv.Itoa(appInstanceIndex)
 	}
 	sshCmd += " -c"
 	args = append(args, "--ssh", sshCmd)
+	args = append(args, "--ssh-prefix", pathSetup)
 
 	if jstallArgs != "" {
-		args = append(args, strings.Fields(jstallArgs)...)
+		splitArgs, err := shlex.Split(jstallArgs)
+		if err != nil {
+			return "", fmt.Errorf("invalid jstall arguments: %w", err)
+		}
+		args = append(args, splitArgs...)
 	}
 
 	displayCmd := formatCommandForDisplay(javaPath, args)
@@ -198,6 +209,24 @@ func (c *JavaPlugin) executeJstall(appName string, jstallArgs string, appInstanc
 
 	if dryRun {
 		return displayCmd, nil
+	}
+
+	// Pre-validate SSH connectivity to avoid confusing "No JVMs found" errors
+	if appName != "" {
+		testArgs := []string{"ssh", appName}
+		if appInstanceIndex != -1 {
+			testArgs = append(testArgs, "--app-instance-index", strconv.Itoa(appInstanceIndex))
+		}
+		testArgs = append(testArgs, "-c", "echo ok")
+		testCmd := exec.Command("cf", testArgs...)
+		testOutput, testErr := testCmd.CombinedOutput()
+		if testErr != nil {
+			outputStr := strings.TrimSpace(string(testOutput))
+			if outputStr != "" {
+				return "", fmt.Errorf("cannot connect to application via SSH: %s", outputStr)
+			}
+			return "", fmt.Errorf("cannot connect to application via SSH: %w", testErr)
+		}
 	}
 
 	cmd := exec.Command(javaPath, args...)

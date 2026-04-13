@@ -146,7 +146,7 @@ Profiling started
 Running arbitrary JCMD commands, like `VM.uptime`:
 
 ```sh
-> cf java jcmd $APP_NAME -a VM.uptime
+> cf java jcmd $APP_NAME --args 'VM.uptime'
 Connected to remote JVM
 JVM response code = 0
 $TIME s
@@ -158,10 +158,10 @@ Running [JStall](https://github.com/parttimenerd/jstall) for quick JVM inspectio
 # Default: run status analysis with deadlock detection, hot threads, etc.
 > cf java jstall $APP_NAME
 
-# Run a specific jstall subcommand
-> cf java jstall $APP_NAME --args 'deadlock'
-> cf java jstall $APP_NAME --args 'most-work --dumps 3'
-> cf java jstall $APP_NAME --args 'flame'
+# Run a specific jstall subcommand (must include target, typically 'all')
+> cf java jstall $APP_NAME --args 'deadlock all'
+> cf java jstall $APP_NAME --args 'most-work --dumps 3 all'
+> cf java jstall $APP_NAME --args 'flame all'
 ```
 
 Recording JVM diagnostic data for later analysis or sharing:
@@ -174,7 +174,7 @@ Recording JVM diagnostic data for later analysis or sharing:
 > cf java record-status $APP_NAME diagnostics.zip
 
 # Record with full data (including expensive jcmd commands, flame graph, and JFR)
-> cf java record-status $APP_NAME --args '--full'
+> cf java record-status $APP_NAME --full
 
 # Replay the recording locally with jstall
 > jstall -f diagnostics.zip status all
@@ -234,7 +234,7 @@ USAGE:
         '--no-download' to prevent this. Environment variables available:
         @FSPATH (writable directory path, always set), @ARGS (command
         arguments), @APP_NAME (application name), @FILE_NAME (generated filename
-        for file operations without UUID), and @STATIC_FILE_NAME (without UUID).
+        with UUID for file operations), and @STATIC_FILE_NAME (without UUID).
         Use single quotes around --args to prevent shell expansion.
 
      jfr-start
@@ -243,7 +243,7 @@ USAGE:
 
      jfr-start-profile
         Start a Java Flight Recorder profile recording on a running Java
-        application (stores in the container-dir))
+        application (stores in the container-dir)
 
      jfr-start-gc (recent SapMachine only)
         Start a Java Flight Recorder GC recording on a running Java application
@@ -341,12 +341,18 @@ OPTIONS:
                                 defaults to the current directory
    --no-download             -nd, don't download the heap dump/JFR/... file to local, only keep it in the
                                 container, implies '--keep'
-   --verbose                 -v, enable verbose output for the plugin
+   --verbose                 enable verbose output for the plugin (note: -v is reserved by CF CLI)
 
 </pre>
 
-The heap dumps and profiles will be copied to a local file if `-local-dir` is specified as a full folder path. Without
-providing `-local-dir` the heap dump will only be created in the container and not transferred. To save disk space of
+### Security Note on `--args`
+
+The `--args` parameter passes values directly into remote shell commands via `cf ssh`. This is by design to support
+shell features like environment variable expansion and piping. **Do not pass untrusted input to `--args`** — treat
+it with the same caution as a shell command.
+
+The heap dumps and profiles will be downloaded to a local file automatically (to the current directory by default).
+Use `--local-dir` to specify a different download location. To save disk space of
 the application container, the files are automatically deleted unless the `-keep` option is set.
 
 Providing `-container-dir` is optional. If specified the plugin will create the heap dump or profile at the given file
@@ -361,7 +367,7 @@ Everything else, like thread dumps, will be output to `std-out`. You may want to
 e.g., by executing:
 
 ```shell
-cf java thread-dump [my_app] -i [my_instance_index] > heap-dump.hprof
+cf java thread-dump [my_app] -i [my_instance_index] > thread-dump.txt
 ```
 
 The `-k` flag is invalid when invoking non file producing commands. (Unlike with heap dumps, the JVM does not need to
@@ -435,7 +441,60 @@ make build
 development build from GitHub Actions instead, use:
 
 ```bash
-JSTALL_DEV=1 make build
+
+### Known Command Limitations
+
+#### jstall Flame Graph May Fail in Containerized Environments
+
+The `jstall flame` command may fail with error:
+```
+Error: profiling was skipped: profiling-failed
+jstall execution failed: exit status 1
+```
+
+**Reason:** Flame graph generation requires system-level profiling capabilities (perf events) that may be restricted 
+in containerized environments for security reasons.
+
+**Workarounds:**
+
+1. Use async-profiler directly for CPU profiling:
+   ```bash
+   cf java asprof-start-cpu $APP_NAME
+   # ... wait for profiling ...
+   cf java asprof-stop $APP_NAME
+   ```
+
+2. Use other jstall commands that don't require perf:
+   ```bash
+   cf java jstall $APP_NAME --args 'status all'      # JVM status & diagnostics
+   cf java jstall $APP_NAME --args 'deadlock all'    # Deadlock detection
+   cf java jstall $APP_NAME --args 'threads all'     # Thread information
+   ```
+
+3. Record diagnostic data for later analysis:
+   ```bash
+   cf java record-status $APP_NAME diagnostics.zip
+   # Then replay locally
+   jstall -f diagnostics.zip status all
+   ```
+
+#### SSH Connection Failures
+
+Commands may fail with SSH connection errors like:
+```
+ssh: handshake failed: read tcp X.X.X.X:XXXXX->X.X.X.X:2222: read: connection reset by peer
+```
+
+**Common causes and fixes:**
+
+| Error | Likely Cause | Solution |
+|-------|------|----------|
+| `connection refused` or `not enabled` | SSH not enabled on application | `cf enable-ssh APP_NAME && cf restart APP_NAME` |
+| `connection reset` | Network interruption | Retry the command; check internet connection |
+| `timeout` | Network unreachable | Check firewall/proxy settings; verify platform connectivity |
+| `Permission denied` | Authentication failed | `cf logout && cf login` with correct credentials |
+
+**Debugging:** Use `cf ssh APP_NAME -c 'echo ok'` to test SSH connectivity directly.
 ```
 
 This pulls the latest JStall build directly from the GitHub Actions artifacts instead of the released version.

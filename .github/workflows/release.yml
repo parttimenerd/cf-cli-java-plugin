@@ -40,6 +40,12 @@ jobs:
           python -m pip install --upgrade pip
           pip install PyYAML
 
+      - name: Download JStall minimal JAR for go:embed
+        shell: bash
+        run: |
+          mkdir -p dist
+          curl -fsSL -o dist/jstall-minimal.jar https://github.com/parttimenerd/jstall/releases/latest/download/jstall-minimal.jar
+
       - name: Install dependencies
         run: go mod tidy -e || true
 

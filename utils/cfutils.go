@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"slices"
 	"sort"
 	"strings"
@@ -210,6 +211,12 @@ func GetAvailablePath(data string, userpath string) (string, error) {
 
 // CopyOverCat copies a remote file to a local destination using the cf ssh command and cat.
 func CopyOverCat(args []string, src string, dest string) error {
+	// Ensure parent directory exists
+	if dir := filepath.Dir(dest); dir != "" && dir != "." {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return fmt.Errorf("cannot create local directory %s: %w", dir, err)
+		}
+	}
 	f, err := os.OpenFile(dest, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
 		return errors.New("Error creating local file at  " + dest + ". Please check that you are allowed to create files at the given local path.")
@@ -221,7 +228,7 @@ func CopyOverCat(args []string, src string, dest string) error {
 		}
 	}()
 
-	args = append(args, "cat "+src)
+	args = append(args, "cat \""+src+"\"")
 	cat := exec.Command("cf", args...)
 
 	cat.Stdout = f
@@ -241,7 +248,7 @@ func CopyOverCat(args []string, src string, dest string) error {
 
 // DeleteRemoteFile removes a file from the remote Cloud Foundry application container.
 func DeleteRemoteFile(args []string, path string) error {
-	args = append(args, "rm -fr "+path)
+	args = append(args, "rm -fr \""+path+"\"")
 	_, err := exec.Command("cf", args...).Output()
 	if err != nil {
 		return errors.New("error occurred while removing dump file generated")
@@ -251,19 +258,26 @@ func DeleteRemoteFile(args []string, path string) error {
 }
 
 // FindHeapDumpFile locates heap dump files (*.hprof) in the specified path on the remote container.
-func FindHeapDumpFile(args []string, fullpath string, fspath string) (string, error) {
-	return FindFile(args, fullpath, fspath, "*.hprof")
+func FindHeapDumpFile(args []string, fullpath string, fspath string, namePrefix string) (string, error) {
+	return FindFile(args, fullpath, fspath, "*.hprof", namePrefix)
 }
 
 // FindJFRFile locates Java Flight Recorder files (*.jfr) in the specified path on the remote container.
-func FindJFRFile(args []string, fullpath string, fspath string) (string, error) {
-	return FindFile(args, fullpath, fspath, "*.jfr")
+func FindJFRFile(args []string, fullpath string, fspath string, namePrefix string) (string, error) {
+	return FindFile(args, fullpath, fspath, "*.jfr", namePrefix)
 }
 
 // FindFile searches for files matching the given pattern in the remote container,
 // returning the most recently modified file that matches.
-func FindFile(args []string, fullpath string, fspath string, pattern string) (string, error) {
-	cmd := " [ -f '" + fullpath + "' ] && echo '" + fullpath + "' ||  find " + fspath + " -name '" + pattern + "' -printf '%T@ %p\\0' | sort -zk 1nr | sed -z 's/^[^ ]* //' | tr '\\0' '\\n' | head -n 1 "
+// If namePrefix is non-empty, the fallback find restricts to files starting with that prefix.
+func FindFile(args []string, fullpath string, fspath string, pattern string, namePrefix string) (string, error) {
+	// Build a find pattern: if namePrefix is given, restrict to namePrefix-*.ext
+	findPattern := pattern
+	if namePrefix != "" {
+		ext := pattern[1:] // e.g., "*.jfr" -> ".jfr"
+		findPattern = namePrefix + "*" + ext
+	}
+	cmd := " [ -f '" + fullpath + "' ] && echo '" + fullpath + "' ||  find \"" + fspath + "\" -name '" + findPattern + "' -printf '%T@ %p\\0' | sort -zk 1nr | sed -z 's/^[^ ]* //' | tr '\\0' '\\n' | head -n 1 "
 
 	args = append(args, cmd)
 	output, err := exec.Command("cf", args...).Output()
@@ -283,7 +297,7 @@ func FindFile(args []string, fullpath string, fspath string, pattern string) (st
 
 // ListFiles retrieves a list of files in the specified directory on the remote container.
 func ListFiles(args []string, path string) ([]string, error) {
-	cmd := "ls " + path
+	cmd := "ls \"" + path + "\""
 	args = append(args, cmd)
 	output, err := exec.Command("cf", args...).Output()
 	if err != nil {
@@ -393,9 +407,15 @@ func WrapTextWithPrefix(text, prefix string, maxWidth int, miscLineIndent int) s
 }
 
 // ToSentenceCase returns the input string with the first character uppercased and the rest lowercased.
+// If the first word is an all-uppercase acronym (e.g., "JFR", "SSH"), the string is returned unchanged.
 // Handles Unicode and empty strings safely.
 func ToSentenceCase(input string) string {
 	if input == "" {
+		return input
+	}
+	// If first word is an all-uppercase acronym (2+ chars), preserve as-is
+	words := strings.SplitN(input, " ", 2)
+	if len(words[0]) > 1 && words[0] == strings.ToUpper(words[0]) {
 		return input
 	}
 	runes := []rune(input)

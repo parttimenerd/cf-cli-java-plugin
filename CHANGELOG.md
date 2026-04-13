@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Bundle [jstall](https://github.com/parttimenerd/jstall) (jstall-minimal.jar) for one-shot JVM inspection
   via `cf java jstall APP_NAME`. Requires Java 17+ locally. Supports all jstall subcommands via `jstall APP --args`.
 
+### Changed
+- Improved SSH error messages for better clarity and debugging
+- Enhanced documentation and README with better clarity
+
 ## [4.0.2]
 
 ### Fixed

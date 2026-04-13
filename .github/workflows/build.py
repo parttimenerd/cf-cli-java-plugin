@@ -19,4 +19,6 @@ os_name = os_name_map[platform.system().lower()]
 arch = arch_map[platform.machine().lower()]
 print(f"Building for {os_name} {arch}")
 
-os.system(f"go build -o dist/cf-cli-java-plugin-{os_name}-{arch}")
+import sys
+rc = os.system(f"go build -o dist/cf-cli-java-plugin-{os_name}-{arch}")
+sys.exit(rc >> 8 if os.name != 'nt' else rc)

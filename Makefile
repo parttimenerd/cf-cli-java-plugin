@@ -5,6 +5,8 @@ JSTALL_DEV ?=
 
 all: install
 
+build: compile
+
 $(JSTALL_JAR):
 	mkdir -p dist
 ifdef JSTALL_DEV
@@ -23,7 +25,7 @@ update-jstall:
 	rm -f $(JSTALL_JAR)
 	$(MAKE) download-jstall
 
-.PHONY: update-jstall download-jstall
+.PHONY: build compile compile-all update-jstall download-jstall install remove clean vclean
 
 # When JSTALL_DEV=1, always re-download the jar (skip file existence check)
 ifdef JSTALL_DEV

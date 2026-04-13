@@ -136,5 +136,10 @@
     // Additional Pylance settings for better IntelliSense
     "python.analysis.logLevel": "Information",
     "python.analysis.symbolsHierarchyDepthLimit": 10,
-    "python.analysis.importFormat": "relative"
+    "python.analysis.importFormat": "relative",
+    "chat.tools.terminal.autoApprove": {
+        "cf": true,
+        "timeout": true,
+        "make": true
+    }
 }

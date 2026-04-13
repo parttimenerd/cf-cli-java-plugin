@@ -160,7 +160,7 @@ class TestHeapDump(TestBase):
     def test_negative_app_instance_index(self, t, app):
         # Test negative index
         t.run(f"heap-dump {app} --app-instance-index -1").should_fail().should_contain(
-            "Invalid application instance index -1, must be >= 0"
+            "Error: app instance index must be non-negative, got -1"
         )
 
     @test(no_restart=True)
@@ -173,7 +173,14 @@ class TestHeapDump(TestBase):
     def test_wrong_app_instance_index(self, t, app):
         """Test heap dump with wrong app instance index."""
         t.run(f"heap-dump {app} --app-instance-index 1").should_fail().should_contain(
-            "Command execution failed: The specified application instance does not exist"
+            "Cannot connect to app"
+        ).should_contain("requested application instance is not available")
+
+    @test(no_restart=True)
+    def test_contradictory_keep_and_no_download_flags(self, t, app):
+        """Test that contradictory file retention flags are rejected."""
+        t.run(f"heap-dump {app} --keep --no-download").should_fail().should_contain(
+            "flags '--keep' and '--no-download' are contradictory"
         )
 
 

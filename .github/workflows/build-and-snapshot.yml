@@ -83,7 +83,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: cf-cli-java-plugin-${{ matrix.os }}
-          path: dist/
+          path: |
+            dist/*
+            !dist/jstall-minimal.jar
 
   release:
     name: Create Snapshot Release
