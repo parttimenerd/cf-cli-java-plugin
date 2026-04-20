@@ -112,8 +112,10 @@ In case a proxy server is used, ensure that `cf ssh` is configured accordingly. 
 [official documentation](https://docs.cloudfoundry.org/cf-cli/http-proxy.html#v3-ssh-socks5) of the Cloud Foundry
 Command Line for more information. If `cf java` is having issues connecting to your app, chances are the problem is in
 the networking issues encountered by `cf ssh`. To verify, run your `cf java` command in "dry-run" mode by adding the
-`-n` flag and try to execute the command line that `cf java` gives you back. If it fails, the issue is not in `cf java`,
-but in whatever makes `cf ssh` fail.
+`-n` flag and try to execute the command line that `cf java` gives you back. The plugin now wraps common SSH failures
+with user-facing guidance instead of printing the raw `ssh` error verbatim, so running the generated `cf ssh` command
+directly is the quickest way to inspect the underlying transport error. If that direct command fails, the issue is not
+in `cf java`, but in whatever makes `cf ssh` fail.
 
 ### Examples
 
@@ -375,23 +377,84 @@ output the thread dump to file before streaming it out.)
 
 ## Limitations
 
-The capability of creating heap dumps and profiles is also limited by the filesystem available to the container. The
-`cf java heap-dump`, `cf java asprof-stop` and `cf java jfr-stop` commands trigger a write to the file system, read the
-content of the file over the SSH connection, and then remove the file from the container's file system (unless you have
-the `-k` flag set). The amount of filesystem space available to a container is set for the entire Cloud Foundry
-landscape with a global configuration. The size of a heap dump is roughly linear with the allocated memory of the heap
-and the size of the profile is related to the length of the recording. So, it could be that, in case of large heaps,
-long profiling durations or the filesystem having too much stuff in it, there is not enough space on the filesystem for
-creating the file. In that case, the creation of the heap dump or profile recording and thus the command will fail.
+Some commands depend on writable filesystem space inside the application container. In particular,
+`cf java heap-dump`, `cf java asprof-stop`, and `cf java jfr-stop` first create a file in the container, then stream
+that file back over SSH, and finally remove it again unless the `-k` flag is set.
 
-From the perspective of integration in workflows and overall shell-friendliness, the `cf java` plugin suffers from some
-shortcomings in the current `cf-cli` plugin framework:
+The available container filesystem space is controlled by the Cloud Foundry landscape configuration and may be limited.
+Heap dumps can be large, roughly scaling with heap usage, and profile files can also grow substantially depending on
+recording duration and settings. If the container does not have enough free space, the dump or recording cannot be
+created and the command will fail.
+
+The plugin is also constrained by limitations in the current `cf-cli` plugin framework:
 
 - There is no distinction between `stdout` and `stderr` output from the underlying `cf ssh` command (see
   [this issue on the `cf-cli` project](https://github.com/cloudfoundry/cli/issues/1074))
-  - The `cf java` will however (mostly) exit with status code `1` when the underpinning `cf ssh` command fails
-  - If split between `stdout` and `stderr` is needed, you can run the `cf java` plugin in dry-run mode (`--dry-run`
-    flag) and execute its output instead
+   - `cf java` will still usually exit with status code `1` when the underlying `cf ssh` command fails
+   - If you need separate `stdout` and `stderr`, run the plugin in dry-run mode (`--dry-run`) and execute the generated
+      command directly
+
+### Known Command Limitations
+
+#### jstall Flame Graph May Fail in Containerized Environments
+
+The `jstall flame` command may fail with an error like:
+```
+Error: profiling was skipped: profiling-failed
+jstall execution failed: exit status 1
+```
+
+**Reason:** Flame graph generation depends on low-level profiling capabilities such as `perf` events. These are often
+restricted in containerized environments for security reasons.
+
+**Workarounds:**
+
+1. Use async-profiler directly for CPU profiling:
+   ```bash
+   cf java asprof-start-cpu $APP_NAME
+   # ... wait for profiling ...
+   cf java asprof-stop $APP_NAME
+   ```
+
+2. Use other jstall commands that don't require perf:
+   ```bash
+   cf java jstall $APP_NAME --args 'status all'      # JVM status & diagnostics
+   cf java jstall $APP_NAME --args 'deadlock all'    # Deadlock detection
+   cf java jstall $APP_NAME --args 'threads all'     # Thread information
+   ```
+
+3. Record diagnostic data for later analysis:
+   ```bash
+   cf java record-status $APP_NAME diagnostics.zip
+   # Then replay locally
+   jstall -f diagnostics.zip status all
+   ```
+
+#### SSH Connection Failures
+
+When the plugin cannot establish SSH connectivity, it reports a categorized error message with likely causes and
+suggested next steps instead of only printing the raw `cf ssh` transport error. A typical message looks like:
+```
+Cannot connect to app 'APP_NAME' via SSH.
+Possible causes and solutions:
+1. SSH may not be enabled on the application. Try:
+   cf enable-ssh APP_NAME
+   cf restart APP_NAME
+2. Check your network connection and firewall settings.
+3. Verify the application is running: cf app APP_NAME
+```
+
+**Common causes and fixes:**
+
+| Error | Likely Cause | Solution |
+|-------|------|----------|
+| `connection refused` or `not enabled` | SSH not enabled on application | `cf enable-ssh APP_NAME && cf restart APP_NAME` |
+| `connection reset` | Network interruption | Retry the command; check internet connection |
+| `timeout` | Network unreachable | Check firewall/proxy settings; verify platform connectivity |
+| `Permission denied` | Authentication failed | `cf logout && cf login` with correct credentials |
+
+**Debugging:** If you need the original SSH transport error from Cloud Foundry, run `cf ssh APP_NAME -c 'echo ok'`
+directly.
 
 ## Side-effects on the running instance
 
@@ -441,60 +504,10 @@ make build
 development build from GitHub Actions instead, use:
 
 ```bash
+JSTALL_DEV=1 make build
 
-### Known Command Limitations
-
-#### jstall Flame Graph May Fail in Containerized Environments
-
-The `jstall flame` command may fail with error:
-```
-Error: profiling was skipped: profiling-failed
-jstall execution failed: exit status 1
-```
-
-**Reason:** Flame graph generation requires system-level profiling capabilities (perf events) that may be restricted 
-in containerized environments for security reasons.
-
-**Workarounds:**
-
-1. Use async-profiler directly for CPU profiling:
-   ```bash
-   cf java asprof-start-cpu $APP_NAME
-   # ... wait for profiling ...
-   cf java asprof-stop $APP_NAME
-   ```
-
-2. Use other jstall commands that don't require perf:
-   ```bash
-   cf java jstall $APP_NAME --args 'status all'      # JVM status & diagnostics
-   cf java jstall $APP_NAME --args 'deadlock all'    # Deadlock detection
-   cf java jstall $APP_NAME --args 'threads all'     # Thread information
-   ```
-
-3. Record diagnostic data for later analysis:
-   ```bash
-   cf java record-status $APP_NAME diagnostics.zip
-   # Then replay locally
-   jstall -f diagnostics.zip status all
-   ```
-
-#### SSH Connection Failures
-
-Commands may fail with SSH connection errors like:
-```
-ssh: handshake failed: read tcp X.X.X.X:XXXXX->X.X.X.X:2222: read: connection reset by peer
-```
-
-**Common causes and fixes:**
-
-| Error | Likely Cause | Solution |
-|-------|------|----------|
-| `connection refused` or `not enabled` | SSH not enabled on application | `cf enable-ssh APP_NAME && cf restart APP_NAME` |
-| `connection reset` | Network interruption | Retry the command; check internet connection |
-| `timeout` | Network unreachable | Check firewall/proxy settings; verify platform connectivity |
-| `Permission denied` | Authentication failed | `cf logout && cf login` with correct credentials |
-
-**Debugging:** Use `cf ssh APP_NAME -c 'echo ok'` to test SSH connectivity directly.
+# Or download a specific GitHub Actions run by ID
+JSTALL_DEV=<run-id> make build
 ```
 
 This pulls the latest JStall build directly from the GitHub Actions artifacts instead of the released version.
