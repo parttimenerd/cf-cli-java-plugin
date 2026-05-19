@@ -28,7 +28,7 @@ func javaExecutable() string {
 	if runtime.GOOS == "windows" {
 		return "java.exe"
 	}
-	return "java"
+	return cmdJava
 }
 
 func getJavaMajorVersion(javaPath string) (int, error) {
@@ -213,7 +213,7 @@ func (c *JavaPlugin) executeJstall(appName string, jstallArgs string, appInstanc
 
 	// Pre-validate SSH connectivity to avoid confusing "No JVMs found" errors
 	if appName != "" {
-		testArgs := []string{"ssh", appName}
+		testArgs := []string{cmdSSH, appName}
 		if appInstanceIndex != -1 {
 			testArgs = append(testArgs, "--app-instance-index", strconv.Itoa(appInstanceIndex))
 		}

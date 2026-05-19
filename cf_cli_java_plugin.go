@@ -28,6 +28,23 @@ import (
 // Assert that JavaPlugin implements plugin.Plugin.
 var _ plugin.Plugin = (*JavaPlugin)(nil)
 
+// String constants extracted to satisfy goconst linter.
+const (
+	cmdSSH           = "ssh"
+	cmdJava          = "java"
+	flagKeep         = "keep"
+	flagNoDownload   = "no-download"
+	flagContainerDir = "container-dir"
+	flagLocalDir     = "local-dir"
+	typeBool         = "bool"
+	typeString       = "string"
+	toolJcmd         = "jcmd"
+	toolAsprof       = "asprof"
+	extJFR           = ".jfr"
+	labelJFR         = "JFR recording"
+	partJFR          = "jfr"
+)
+
 // JavaPlugin is a CF CLI plugin that supports taking heap and thread dumps on demand
 type JavaPlugin struct {
 	verbose bool
@@ -160,7 +177,7 @@ func wrapSSHError(appName string, errorOutput string, err error) string {
 
 // checkSSHConnectivity tests whether the app is reachable via SSH before running the main command.
 func (c *JavaPlugin) checkSSHConnectivity(appName string, appInstanceIndex int) error {
-	testArgs := []string{"ssh", appName}
+	testArgs := []string{cmdSSH, appName}
 	if appInstanceIndex >= 0 {
 		testArgs = append(testArgs, "--app-instance-index", strconv.Itoa(appInstanceIndex))
 	}
@@ -212,60 +229,60 @@ var flagDefinitions = []FlagDefinition{
 		DefaultInt:  -1,
 	},
 	{
-		Name:        "keep",
+		Name:        flagKeep,
 		ShortName:   "k",
 		Usage:       "whether to `keep` the heap-dump/JFR/... files on the container of the application instance after having downloaded it locally",
 		Description: "keep the heap dump in the container; by default the heap dump/JFR/... will be deleted from the container's filesystem after being downloaded",
-		Type:        "bool",
+		Type:        typeBool,
 	},
 	{
-		Name:        "no-download",
+		Name:        flagNoDownload,
 		ShortName:   "nd",
 		Usage:       "do not download the heap-dump/JFR/... file to the local machine",
 		Description: "don't download the heap dump/JFR/... file to local, only keep it in the container, implies '--keep'",
-		Type:        "bool",
+		Type:        typeBool,
 	},
 	{
 		Name:        "dry-run",
 		ShortName:   "n",
 		Usage:       "triggers the `dry-run` mode to show only the cf-ssh command that would have been executed",
 		Description: "just output to command line what would be executed",
-		Type:        "bool",
+		Type:        typeBool,
 	},
 	{
 		Name:        "verbose",
 		ShortName:   "v",
 		Usage:       "enable verbose output for the plugin",
 		Description: "enable verbose output for the plugin",
-		Type:        "bool",
+		Type:        typeBool,
 	},
 	{
-		Name:        "container-dir",
+		Name:        flagContainerDir,
 		ShortName:   "cd",
 		Usage:       "specify the folder path where the dump/JFR/... file should be stored in the container",
 		Description: "the directory path in the container that the heap dump/JFR/... file will be saved to",
-		Type:        "string",
+		Type:        typeString,
 	},
 	{
-		Name:        "local-dir",
+		Name:        flagLocalDir,
 		ShortName:   "ld",
 		Usage:       "specify the folder where the dump/JFR/... file will be downloaded to, defaults to the current directory",
 		Description: "the local directory path that the dump/JFR/... file will be saved to, defaults to the current directory",
-		Type:        "string",
+		Type:        typeString,
 	},
 	{
 		Name:        "full",
 		ShortName:   "f",
 		Usage:       "enable `full` mode for more comprehensive analysis (status and record-status commands)",
 		Description: "enable full mode for more comprehensive JVM analysis (only for status and record-status)",
-		Type:        "bool",
+		Type:        typeBool,
 	},
 	{
 		Name:        "args",
 		ShortName:   "a",
 		Usage:       "Miscellaneous arguments to pass to the command in the container, be aware to end it with a space if it is a simple option",
 		Description: "Miscellaneous arguments to pass to the command (if supported) in the container, be aware to end it with a space if it is a simple option. For commands that create arbitrary files (jcmd, asprof), the environment variables @FSPATH, @ARGS, @APP_NAME, @FILE_NAME, and @STATIC_FILE_NAME are available in --args to reference the working directory path, arguments, application name, and generated file name respectively.",
-		Type:        "string",
+		Type:        typeString,
 	},
 }
 
@@ -419,7 +436,7 @@ func (c *JavaPlugin) DoRun(cliConnection plugin.CliConnection, args []string) (s
 		if errors.As(err, &invalidUsageErr) {
 			fmt.Println()
 			fmt.Println()
-			err := exec.Command("cf", "help", "java").Run()
+			err := exec.Command("cf", "help", cmdJava).Run()
 			if err != nil {
 				ui.Failed("Failed to show help")
 			}
@@ -572,28 +589,28 @@ fi`,
 	{
 		Name:          "vm-info",
 		Description:   "Print information about the Java Virtual Machine running a Java application",
-		RequiredTools: []string{"jcmd"},
+		RequiredTools: []string{toolJcmd},
 		GenerateFiles: false,
 		SSHCommand:    FilterJCMDRemoteMessage + `$JCMD_COMMAND $(pidof java) VM.info | filter_jcmd_remote_message`,
 	},
 	{
-		Name:                             "jcmd",
+		Name:                             toolJcmd,
 		Description:                      "Run a JCMD command on a running Java application via --args, downloads and deletes all files that are created in the current folder, use '--no-download' to prevent this. Environment variables available: @FSPATH (writable directory path, always set), @ARGS (command arguments), @APP_NAME (application name), @FILE_NAME (generated filename with UUID for file operations), and @STATIC_FILE_NAME (without UUID). Use single quotes around --args to prevent shell expansion.",
-		RequiredTools:                    []string{"jcmd"},
+		RequiredTools:                    []string{toolJcmd},
 		GenerateFiles:                    false,
 		GenerateArbitraryFiles:           true,
-		GenerateArbitraryFilesFolderName: "jcmd",
+		GenerateArbitraryFilesFolderName: toolJcmd,
 		SSHCommand:                       FilterJCMDRemoteMessage + `$JCMD_COMMAND $(pidof java) @ARGS | filter_jcmd_remote_message`,
 	},
 	{
 		Name:          "jfr-start",
 		Description:   "Start a Java Flight Recorder default recording on a running Java application (stores in the container-dir)",
-		RequiredTools: []string{"jcmd"},
+		RequiredTools: []string{toolJcmd},
 		GenerateFiles: false,
 		NeedsFileName: true,
-		FileExtension: ".jfr",
-		FileLabel:     "JFR recording",
-		FileNamePart:  "jfr",
+		FileExtension: extJFR,
+		FileLabel:     labelJFR,
+		FileNamePart:  partJFR,
 		SSHCommand: FilterJCMDRemoteMessage + CheckNoCurrentJFRRecordingCommand +
 			`$JCMD_COMMAND $(pidof java) JFR.start settings=default.jfc filename=@FILE_NAME name=JFR | filter_jcmd_remote_message;
 		echo "Use 'cf java jfr-stop @APP_NAME' to copy the file to the local folder"`,
@@ -601,12 +618,12 @@ fi`,
 	{
 		Name:          "jfr-start-profile",
 		Description:   "Start a Java Flight Recorder profile recording on a running Java application (stores in the container-dir)",
-		RequiredTools: []string{"jcmd"},
+		RequiredTools: []string{toolJcmd},
 		GenerateFiles: false,
 		NeedsFileName: true,
-		FileExtension: ".jfr",
-		FileLabel:     "JFR recording",
-		FileNamePart:  "jfr",
+		FileExtension: extJFR,
+		FileLabel:     labelJFR,
+		FileNamePart:  partJFR,
 		SSHCommand: FilterJCMDRemoteMessage + CheckNoCurrentJFRRecordingCommand +
 			`$JCMD_COMMAND $(pidof java) JFR.start settings=profile.jfc filename=@FILE_NAME name=JFR | filter_jcmd_remote_message;
 		echo "Use 'cf java jfr-stop @APP_NAME' to copy the file to the local folder"`,
@@ -614,13 +631,13 @@ fi`,
 	{
 		Name:                   "jfr-start-gc",
 		Description:            "Start a Java Flight Recorder GC recording on a running Java application (stores in the container-dir)",
-		RequiredTools:          []string{"jcmd"},
+		RequiredTools:          []string{toolJcmd},
 		GenerateFiles:          false,
 		OnlyOnRecentSapMachine: true,
 		NeedsFileName:          true,
-		FileExtension:          ".jfr",
-		FileLabel:              "JFR recording",
-		FileNamePart:           "jfr",
+		FileExtension:          extJFR,
+		FileLabel:              labelJFR,
+		FileNamePart:           partJFR,
 		SSHCommand: FilterJCMDRemoteMessage + CheckNoCurrentJFRRecordingCommand +
 			`$JCMD_COMMAND $(pidof java) JFR.start settings=gc.jfc filename=@FILE_NAME name=JFR | filter_jcmd_remote_message;
 		echo "Use 'cf java jfr-stop @APP_NAME' to copy the file to the local folder"`,
@@ -628,13 +645,13 @@ fi`,
 	{
 		Name:                   "jfr-start-gc-details",
 		Description:            "Start a Java Flight Recorder detailed GC recording on a running Java application (stores in the container-dir)",
-		RequiredTools:          []string{"jcmd"},
+		RequiredTools:          []string{toolJcmd},
 		GenerateFiles:          false,
 		OnlyOnRecentSapMachine: true,
 		NeedsFileName:          true,
-		FileExtension:          ".jfr",
-		FileLabel:              "JFR recording",
-		FileNamePart:           "jfr",
+		FileExtension:          extJFR,
+		FileLabel:              labelJFR,
+		FileNamePart:           partJFR,
 		SSHCommand: FilterJCMDRemoteMessage + CheckNoCurrentJFRRecordingCommand +
 			`$JCMD_COMMAND $(pidof java) JFR.start settings=gc_details.jfc filename=@FILE_NAME name=JFR | filter_jcmd_remote_message;
 		echo "Use 'cf java jfr-stop @APP_NAME' to copy the file to the local folder"`,
@@ -642,11 +659,11 @@ fi`,
 	{
 		Name:          "jfr-stop",
 		Description:   "Stop a Java Flight Recorder recording on a running Java application",
-		RequiredTools: []string{"jcmd"},
+		RequiredTools: []string{toolJcmd},
 		GenerateFiles: true,
-		FileExtension: ".jfr",
-		FileLabel:     "JFR recording",
-		FileNamePart:  "jfr",
+		FileExtension: extJFR,
+		FileLabel:     labelJFR,
+		FileNamePart:  partJFR,
 		SSHCommand: FilterJCMDRemoteMessage + ` output=$($JCMD_COMMAND $(pidof java) JFR.stop name=JFR | filter_jcmd_remote_message);
 		echo "$output"; echo ""; filename=$(echo "$output" | grep /.*.jfr --only-matching);
 		if [ -z "$filename" ]; then echo "No active JFR recording found to stop"; exit 1; fi;
@@ -658,11 +675,11 @@ fi`,
 	{
 		Name:          "jfr-dump",
 		Description:   "Dump a Java Flight Recorder recording on a running Java application without stopping it",
-		RequiredTools: []string{"jcmd"},
+		RequiredTools: []string{toolJcmd},
 		GenerateFiles: true,
-		FileExtension: ".jfr",
-		FileLabel:     "JFR recording",
-		FileNamePart:  "jfr",
+		FileExtension: extJFR,
+		FileLabel:     labelJFR,
+		FileNamePart:  partJFR,
 		SSHCommand: FilterJCMDRemoteMessage + ` output=$($JCMD_COMMAND $(pidof java) JFR.dump name=JFR | filter_jcmd_remote_message);
 		echo "$output"; echo ""; filename=$(echo "$output" | grep /.*.jfr --only-matching);
 		if [ -z "$filename" ]; then echo "No JFR recording found to dump"; exit 1; fi;
@@ -675,93 +692,93 @@ fi`,
 	{
 		Name:          "jfr-status",
 		Description:   "Check the running Java Flight Recorder recording on a running Java application",
-		RequiredTools: []string{"jcmd"},
+		RequiredTools: []string{toolJcmd},
 		GenerateFiles: false,
 		SSHCommand:    FilterJCMDRemoteMessage + `$JCMD_COMMAND $(pidof java) JFR.check | filter_jcmd_remote_message`,
 	},
 	{
 		Name:          "vm-version",
 		Description:   "Print the version of the Java Virtual Machine running a Java application",
-		RequiredTools: []string{"jcmd"},
+		RequiredTools: []string{toolJcmd},
 		GenerateFiles: false,
 		SSHCommand:    FilterJCMDRemoteMessage + `$JCMD_COMMAND $(pidof java) VM.version | filter_jcmd_remote_message`,
 	},
 	{
 		Name:          "vm-vitals",
 		Description:   "Print vital statistics about the Java Virtual Machine running a Java application",
-		RequiredTools: []string{"jcmd"},
+		RequiredTools: []string{toolJcmd},
 		GenerateFiles: false,
 		SSHCommand:    FilterJCMDRemoteMessage + `$JCMD_COMMAND $(pidof java) VM.vitals | filter_jcmd_remote_message`,
 	},
 	{
-		Name:                             "asprof",
+		Name:                             toolAsprof,
 		Description:                      "Run async-profiler commands passed to asprof via --args, copies files in the current folder. Don't use in combination with asprof-* commands. Downloads and deletes all files that are created in the current folder, if not using 'start' asprof command, use '--no-download' to prevent this. Environment variables available: @FSPATH (writable directory path, always set), @ARGS (command arguments), @APP_NAME (application name), @FILE_NAME (generated filename for file operations), and @STATIC_FILE_NAME (without UUID). Use single quotes around --args to prevent shell expansion.",
 		OnlyOnRecentSapMachine:           true,
-		RequiredTools:                    []string{"asprof"},
+		RequiredTools:                    []string{toolAsprof},
 		GenerateFiles:                    false,
 		GenerateArbitraryFiles:           true,
-		GenerateArbitraryFilesFolderName: "asprof",
+		GenerateArbitraryFilesFolderName: toolAsprof,
 		SSHCommand:                       `$ASPROF_COMMAND $(pidof java) @ARGS`,
 	},
 	{
 		Name:                   "asprof-start-cpu",
 		Description:            "Start an async-profiler CPU-time profile recording on a running Java application",
 		OnlyOnRecentSapMachine: true,
-		RequiredTools:          []string{"asprof"},
+		RequiredTools:          []string{toolAsprof},
 		GenerateFiles:          false,
 		NeedsFileName:          true,
-		FileExtension:          ".jfr",
-		FileNamePart:           "asprof",
+		FileExtension:          extJFR,
+		FileNamePart:           toolAsprof,
 		SSHCommand:             `$ASPROF_COMMAND start $(pidof java) -e cpu -f @FILE_NAME && echo "Use 'cf java asprof-stop @APP_NAME' to copy the file to the local folder"`,
 	},
 	{
 		Name:                   "asprof-start-wall",
 		Description:            "Start an async-profiler wall-clock profile recording on a running Java application",
 		OnlyOnRecentSapMachine: true,
-		RequiredTools:          []string{"asprof"},
+		RequiredTools:          []string{toolAsprof},
 		GenerateFiles:          false,
 		NeedsFileName:          true,
-		FileExtension:          ".jfr",
-		FileNamePart:           "asprof",
+		FileExtension:          extJFR,
+		FileNamePart:           toolAsprof,
 		SSHCommand:             `$ASPROF_COMMAND start $(pidof java) -e wall -f @FILE_NAME && echo "Use 'cf java asprof-stop @APP_NAME' to copy the file to the local folder"`,
 	},
 	{
 		Name:                   "asprof-start-alloc",
 		Description:            "Start an async-profiler allocation profile recording on a running Java application",
 		OnlyOnRecentSapMachine: true,
-		RequiredTools:          []string{"asprof"},
+		RequiredTools:          []string{toolAsprof},
 		GenerateFiles:          false,
 		NeedsFileName:          true,
-		FileExtension:          ".jfr",
-		FileNamePart:           "asprof",
+		FileExtension:          extJFR,
+		FileNamePart:           toolAsprof,
 		SSHCommand:             `$ASPROF_COMMAND start $(pidof java) -e alloc -f @FILE_NAME && echo "Use 'cf java asprof-stop @APP_NAME' to copy the file to the local folder"`,
 	},
 	{
 		Name:                   "asprof-start-lock",
 		Description:            "Start an async-profiler lock profile recording on a running Java application",
 		OnlyOnRecentSapMachine: true,
-		RequiredTools:          []string{"asprof"},
+		RequiredTools:          []string{toolAsprof},
 		GenerateFiles:          false,
 		NeedsFileName:          true,
-		FileExtension:          ".jfr",
-		FileNamePart:           "asprof",
+		FileExtension:          extJFR,
+		FileNamePart:           toolAsprof,
 		SSHCommand:             `$ASPROF_COMMAND start $(pidof java) -e lock -f @FILE_NAME && echo "Use 'cf java asprof-stop @APP_NAME' to copy the file to the local folder"`,
 	},
 	{
 		Name:                   "asprof-stop",
 		Description:            "Stop an async-profiler profile recording on a running Java application",
-		RequiredTools:          []string{"asprof"},
+		RequiredTools:          []string{toolAsprof},
 		OnlyOnRecentSapMachine: true,
 		GenerateFiles:          true,
-		FileExtension:          ".jfr",
+		FileExtension:          extJFR,
 		FileLabel:              "async-profiler recording",
-		FileNamePart:           "asprof",
+		FileNamePart:           toolAsprof,
 		SSHCommand:             `$ASPROF_COMMAND stop $(pidof java)`,
 	},
 	{
 		Name:                   "asprof-status",
 		Description:            "Get the status of async-profiler on a running Java application",
-		RequiredTools:          []string{"asprof"},
+		RequiredTools:          []string{toolAsprof},
 		OnlyOnRecentSapMachine: true,
 		GenerateFiles:          false,
 		SSHCommand:             `$ASPROF_COMMAND status $(pidof java)`,
@@ -799,7 +816,7 @@ func (c *JavaPlugin) execute(_ plugin.CliConnection, args []string) (string, err
 	case "CLI-MESSAGE-UNINSTALL":
 		// Nothing to uninstall, we keep no local state
 		return "", nil
-	case "java":
+	case cmdJava:
 		break
 	default:
 		return "", &InvalidUsageError{message: fmt.Sprintf("Unexpected command Name '%s' (expected : 'java')", args[0])}
@@ -810,7 +827,7 @@ func (c *JavaPlugin) execute(_ plugin.CliConnection, args []string) (string, err
 		return "", &InvalidUsageError{message: fmt.Sprintf("Error while parsing command arguments: %v", parseErr)}
 	}
 
-	fileFlags := []string{"container-dir", "local-dir", "keep", "no-download"}
+	fileFlags := []string{flagContainerDir, flagLocalDir, flagKeep, flagNoDownload}
 
 	c.logVerbosef("Starting command execution")
 	c.logVerbosef("Command arguments: %v", args)
@@ -853,7 +870,7 @@ func (c *JavaPlugin) execute(_ plugin.CliConnection, args []string) (string, err
 	if index == -1 {
 		// Handle 'help' as a subcommand
 		if lowerCommandName == "help" {
-			err := exec.Command("cf", "help", "java").Run()
+			err := exec.Command("cf", "help", cmdJava).Run()
 			if err != nil {
 				return "", fmt.Errorf("failed to show help: %w", err)
 			}
@@ -897,7 +914,7 @@ func (c *JavaPlugin) execute(_ plugin.CliConnection, args []string) (string, err
 			}
 		}
 	}
-	if command.Name == "asprof" {
+	if command.Name == toolAsprof {
 		trimmedMiscArgs := strings.TrimLeft(options.Args, " ")
 		if len(trimmedMiscArgs) > 6 && trimmedMiscArgs[:6] == "start " {
 			noDownload = true
@@ -914,7 +931,7 @@ func (c *JavaPlugin) execute(_ plugin.CliConnection, args []string) (string, err
 		return "", &InvalidUsageError{message: fmt.Sprintf("The flag %q is not supported for %s", "args", command.Name)}
 	}
 	// Validate that commands requiring @ARGS have arguments provided
-	if command.HasMiscArgs() && options.Args == "" && (command.Name == "jcmd" || command.Name == "asprof") {
+	if command.HasMiscArgs() && options.Args == "" && (command.Name == toolJcmd || command.Name == toolAsprof) {
 		c.logVerbosef("Command %s requires --args flag", command.Name)
 		return "", &InvalidUsageError{message: fmt.Sprintf("The command %q requires the --args flag to be set. Use 'cf java %s --help' for usage information.", command.Name, command.Name)}
 	}
@@ -931,7 +948,7 @@ func (c *JavaPlugin) execute(_ plugin.CliConnection, args []string) (string, err
 	applicationName := arguments[1]
 	c.logVerbosef("Application name: %s", applicationName)
 
-	cfSSHArguments := []string{"ssh", applicationName}
+	cfSSHArguments := []string{cmdSSH, applicationName}
 	if options.AppInstanceIndex >= 0 {
 		cfSSHArguments = append(cfSSHArguments, "--app-instance-index", strconv.Itoa(options.AppInstanceIndex))
 	}
@@ -1011,7 +1028,7 @@ func (c *JavaPlugin) execute(_ plugin.CliConnection, args []string) (string, err
 		c.logVerbosef("Setting up required tool: %s", requiredTool)
 		uppercase := strings.ToUpper(requiredTool)
 		toolCommand := fmt.Sprintf(`%[1]s_TOOL_PATH=$(find -executable -name %[2]s | head -1 | tr -d [:space:]); if [ -z "$%[1]s_TOOL_PATH" ]; then echo "%[2]s not found"; exit 1; fi; %[1]s_COMMAND=$(realpath "$%[1]s_TOOL_PATH")`, uppercase, requiredTool)
-		if requiredTool == "jcmd" {
+		if requiredTool == toolJcmd {
 			// add code that first checks whether asprof is present and if so use `asprof jcmd` instead of `jcmd`
 			remoteCommandTokens = append(remoteCommandTokens, toolCommand, "ASPROF_COMMAND=$(realpath $(find -executable -name asprof | head -1 | tr -d [:space:])); if [ -n \"${ASPROF_COMMAND}\" ]; then JCMD_COMMAND=\"${ASPROF_COMMAND} jcmd\"; fi")
 			c.logVerbosef("Added jcmd with asprof fallback")
@@ -1266,7 +1283,7 @@ func (c *JavaPlugin) GetMetadata() plugin.PluginMetadata {
 		usageText += "\n" + wrappedDescription
 	}
 	return plugin.PluginMetadata{
-		Name: "java",
+		Name: cmdJava,
 		Version: plugin.VersionType{
 			Major: 4,
 			Minor: 0,
@@ -1279,7 +1296,7 @@ func (c *JavaPlugin) GetMetadata() plugin.PluginMetadata {
 		},
 		Commands: []plugin.Command{
 			{
-				Name:     "java",
+				Name:     cmdJava,
 				HelpText: "Obtain a heap-dump, thread-dump or profile from a running, SSH-enabled Java application.",
 
 				// UsageDetails is optional
