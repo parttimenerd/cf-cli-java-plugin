@@ -99,7 +99,12 @@ jobs:
           VERSION="${{ github.event.inputs.version }}"
           IFS='.' read -r MAJOR MINOR BUILD <<< "$VERSION"
           
+          # Determine the bundled JStall version
+          export JSTALL_VERSION=$(curl -s https://api.github.com/repos/parttimenerd/jstall/releases/latest | python3 -c "import sys,json; print(json.load(sys.stdin).get('tag_name','unknown'))")
+          echo "Bundled JStall version: $JSTALL_VERSION"
+
           echo "Updating version to $MAJOR.$MINOR.$BUILD"
+          source venv/bin/activate
           python3 .github/workflows/update_version.py "$MAJOR" "$MINOR" "$BUILD"
           
           # Configure git

@@ -6,7 +6,14 @@ This script updates the PluginMetadata version in the Go source code and process
 
 import sys
 import re
+import os
 from pathlib import Path
+
+try:
+    import requests
+    HAS_REQUESTS = True
+except ImportError:
+    HAS_REQUESTS = False
 
 def update_version_in_go_file(file_path, major, minor, build):
     """Update the version in the Go plugin metadata."""
@@ -76,12 +83,41 @@ def is_rc_version(version_str):
     """Return True if the version string ends with -rc or -rcN."""
     return bool(re.match(r"^\d+\.\d+\.\d+-rc(\d+)?$", version_str))
 
+def get_jstall_version():
+    """Get the bundled JStall version from the GitHub API or environment variable."""
+    # Check environment variable first (set by CI workflow)
+    env_version = os.environ.get("JSTALL_VERSION")
+    if env_version:
+        return env_version
+
+    # Fall back to querying the GitHub API
+    if HAS_REQUESTS:
+        try:
+            resp = requests.get(
+                "https://api.github.com/repos/parttimenerd/jstall/releases/latest",
+                timeout=10
+            )
+            if resp.status_code == 200:
+                return resp.json().get("tag_name", "")
+        except Exception:
+            pass
+
+    return ""
+
+
 def generate_release_notes(version, changelog_content):
     """Generate complete release notes file."""
+    jstall_version = get_jstall_version()
+    jstall_note = ""
+    if jstall_version:
+        jstall_note = f"\n**Bundled JStall version**: [{jstall_version}](https://github.com/parttimenerd/jstall/releases/tag/{jstall_version})\n"
+        jstall_note += "\n> **Tip:** You can also use a newer JStall version directly via `jstall --cf APP_NAME COMMAND` "
+        jstall_note += "(see [JStall README](https://github.com/parttimenerd/jstall#usage)).\n"
+
     release_notes = f"""## CF CLI Java Plugin {version}
 
 Plugin for profiling Java applications and getting heap and thread-dumps.
-
+{jstall_note}
 ## Changes
 
 {changelog_content}

@@ -5,16 +5,16 @@
 # Cloud Foundry Command Line Java plugin
 
 This plugin for the [Cloud Foundry Command Line](https://github.com/cloudfoundry/cli) provides convenience utilities to
-work with Java applications deployed on Cloud Foundry.
+work with Java applications deployed on Cloud Foundry by the [SapMachine](https://sapmachine.io) team.
 
 Currently, it allows you to:
 
-- Trigger and retrieve a heap dump and a thread dump from an instance of a Cloud Foundry Java application
-- To run jcmd remotely on your application
-- To start, stop and retrieve JFR and [async-profiler](https://github.com/jvm-profiling-tools/async-profiler)
+- Trigger and retrieve a heap dump and a thread dump from a Cloud Foundry Java application
+- Run jcmd remotely on your application
+- Start, stop and retrieve JFR and [async-profiler](https://github.com/jvm-profiling-tools/async-profiler)
   ([SapMachine](https://sapmachine.io) only) profiles from your application
-- To run [jstall](https://github.com/parttimenerd/jstall) for one-shot JVM inspection (deadlock detection, hot threads,
-  dependency graphs, and more) — bundled directly in the plugin, requires Java 17+ locally
+- Run [jstall](https://github.com/parttimenerd/jstall) for one-shot JVM inspection (deadlock detection, hot threads,
+  dependency graphs, and more): bundled directly in the plugin, requires Java 17+ locally
 
 ## Installation
 
@@ -41,10 +41,12 @@ To install a new version of the plugin, run the following:
 ```sh
 # on Mac arm64
 cf install-plugin https://github.com/SAP/cf-cli-java-plugin/releases/latest/download/cf-cli-java-plugin-macos-arm64
-# on Windows x86
+# on Windows x64
 cf install-plugin https://github.com/SAP/cf-cli-java-plugin/releases/latest/download/cf-cli-java-plugin-windows-amd64
-# on Linux x86
+# on Linux x64
 cf install-plugin https://github.com/SAP/cf-cli-java-plugin/releases/latest/download/cf-cli-java-plugin-linux-amd64
+# on Linux arm64
+cf install-plugin https://github.com/SAP/cf-cli-java-plugin/releases/latest/download/cf-cli-java-plugin-linux-arm64
 ```
 
 You can verify that the plugin is successfully installed by looking for `java` in the output of `cf plugins`.
@@ -59,22 +61,26 @@ To install a new version of the plugin, run the following:
 ```sh
 # on Mac arm64
 cf install-plugin https://github.com/SAP/cf-cli-java-plugin/releases/download/snapshot/cf-cli-java-plugin-macos-arm64
-# on Windows x86
+# on Windows x64
 cf install-plugin https://github.com/SAP/cf-cli-java-plugin/releases/download/snapshot/cf-cli-java-plugin-windows-amd64
-# on Linux x86
+# on Linux x64
 cf install-plugin https://github.com/SAP/cf-cli-java-plugin/releases/download/snapshot/cf-cli-java-plugin-linux-amd64
+# on Linux arm64
+cf install-plugin https://github.com/SAP/cf-cli-java-plugin/releases/download/snapshot/cf-cli-java-plugin-linux-arm64
 ```
 
 ## Usage
 
 ### Prerequisites
 
-#### JDK Tools
+#### JDK Tools (for `heap-dump` only)
 
-This plugin internally uses `jmap` for OpenJDK-like Java virtual machines. When using the
-[Cloud Foundry Java Buildpack](https://github.com/cloudfoundry/java-buildpack), `jmap` is no longer shipped by default
-in order to meet the legal obligations of the Cloud Foundry Foundation. To ensure that `jmap` is available in the
-container of your application, you have to explicitly request a full JDK in your application manifest via the
+The `heap-dump` command uses `jmap`, which is not shipped by default in the
+[Cloud Foundry Java Buildpack](https://github.com/cloudfoundry/java-buildpack). Other commands (`thread-dump`, `jcmd`,
+`jfr-*`, `asprof-*`, `status`, `jstall`, `record-status`) use `jcmd` or `asprof`, which are available in SapMachine and
+most JDK distributions without extra configuration.
+
+To ensure that `jmap` is available for heap dumps, you can request a full JDK in your application manifest via the
 `JBP_CONFIG_OPEN_JDK_JRE` environment variable. This could be done like this:
 
 ```yaml
@@ -86,8 +92,7 @@ applications:
     buildpack: https://github.com/cloudfoundry/java-buildpack
     env:
       JBP_CONFIG_OPEN_JDK_JRE:
-        '{ jre: { repository_root: "https://java-buildpack.cloudfoundry.org/openjdk-jdk/jammy/x86_64", version: 11.+ }
-        }'
+        '{ jre: { repository_root: "https://java-buildpack.cloudfoundry.org/openjdk-jdk/jammy/x86_64", version: 11.+ } }'
       JBP_CONFIG_JAVA_OPTS: "[java_opts: '-XX:+UnlockDiagnosticVMOptions -XX:+DebugNonSafepoints']"
 ```
 
@@ -112,10 +117,10 @@ In case a proxy server is used, ensure that `cf ssh` is configured accordingly. 
 [official documentation](https://docs.cloudfoundry.org/cf-cli/http-proxy.html#v3-ssh-socks5) of the Cloud Foundry
 Command Line for more information. If `cf java` is having issues connecting to your app, chances are the problem is in
 the networking issues encountered by `cf ssh`. To verify, run your `cf java` command in "dry-run" mode by adding the
-`-n` flag and try to execute the command line that `cf java` gives you back. The plugin now wraps common SSH failures
-with user-facing guidance instead of printing the raw `ssh` error verbatim, so running the generated `cf ssh` command
-directly is the quickest way to inspect the underlying transport error. If that direct command fails, the issue is not
-in `cf java`, but in whatever makes `cf ssh` fail.
+`--dry-run` flag and try to execute the command line that `cf java` gives you back. The plugin now wraps common SSH
+failures with user-facing guidance instead of printing the raw `ssh` error verbatim, so running the generated `cf ssh`
+command directly is the quickest way to inspect the underlying transport error. If that direct command fails, the issue
+is not in `cf java`, but in whatever makes `cf ssh` fail.
 
 ### Examples
 
@@ -149,22 +154,35 @@ Running arbitrary JCMD commands, like `VM.uptime`:
 
 ```sh
 > cf java jcmd $APP_NAME --args 'VM.uptime'
-Connected to remote JVM
-JVM response code = 0
 $TIME s
 ```
 
-Running [JStall](https://github.com/parttimenerd/jstall) for quick JVM inspection (requires Java 17+ locally):
+Quick status check of the remote JVM (requires Java 17+ locally):
+
+```sh
+> cf java status $APP_NAME
+```
+
+Running [JStall](https://github.com/parttimenerd/jstall) for more specific JVM inspection (requires Java 17+ locally):
 
 ```sh
 # Default: run status analysis with deadlock detection, hot threads, etc.
 > cf java jstall $APP_NAME
 
-# Run a specific jstall subcommand (must include target, typically 'all')
+# Run a specific jstall subcommand
 > cf java jstall $APP_NAME --args 'deadlock all'
 > cf java jstall $APP_NAME --args 'most-work --dumps 3 all'
 > cf java jstall $APP_NAME --args 'flame all'
 ```
+
+> **Tip:** You can also use JStall directly (without this plugin) via its `--cf` option:
+>
+> ```sh
+> jstall --cf $APP_NAME status all
+> ```
+>
+> This is useful if you want to use a newer JStall version than the one bundled in the plugin. See the
+> [JStall README](https://github.com/parttimenerd/jstall) for installation and usage.
 
 Recording JVM diagnostic data for later analysis or sharing:
 
@@ -211,158 +229,32 @@ directory and downloads any files created there to your local directory (unless 
 
 ### Commands
 
-The following is a list of all available commands (some of the SapMachine specific), generated via `cf java --help`:
+The following is a list of all available commands (some are SapMachine-specific), generated via `cf java --help`:
 
-<pre>
-NAME:
-   java - Obtain a heap-dump, thread-dump or profile from a running, SSH-enabled Java application.
+<!-- prettier-ignore-start -->
+<!-- markdownlint-disable MD036 -->
 
-USAGE:
-   cf java COMMAND APP_NAME [options]
+*Run `cf java --help` to see the full list of commands.*
 
-     heap-dump
-        Generate a heap dump from a running Java application
-
-     thread-dump
-        Generate a thread dump from a running Java application
-
-     vm-info
-        Print information about the Java Virtual Machine running a Java
-        application
-
-     jcmd (supports --args)
-        Run a JCMD command on a running Java application via --args, downloads
-        and deletes all files that are created in the current folder, use
-        '--no-download' to prevent this. Environment variables available:
-        @FSPATH (writable directory path, always set), @ARGS (command
-        arguments), @APP_NAME (application name), @FILE_NAME (generated filename
-        with UUID for file operations), and @STATIC_FILE_NAME (without UUID).
-        Use single quotes around --args to prevent shell expansion.
-
-     jfr-start
-        Start a Java Flight Recorder default recording on a running Java
-        application (stores in the container-dir)
-
-     jfr-start-profile
-        Start a Java Flight Recorder profile recording on a running Java
-        application (stores in the container-dir)
-
-     jfr-start-gc (recent SapMachine only)
-        Start a Java Flight Recorder GC recording on a running Java application
-        (stores in the container-dir)
-
-     jfr-start-gc-details (recent SapMachine only)
-        Start a Java Flight Recorder detailed GC recording on a running Java
-        application (stores in the container-dir)
-
-     jfr-stop
-        Stop a Java Flight Recorder recording on a running Java application
-
-     jfr-dump
-        Dump a Java Flight Recorder recording on a running Java application
-        without stopping it
-
-     jfr-status
-        Check the running Java Flight Recorder recording on a running Java
-        application
-
-     vm-version
-        Print the version of the Java Virtual Machine running a Java application
-
-     vm-vitals
-        Print vital statistics about the Java Virtual Machine running a Java
-        application
-
-     asprof (recent SapMachine only, supports --args)
-        Run async-profiler commands passed to asprof via --args, copies files in
-        the current folder. Don't use in combination with asprof-* commands.
-        Downloads and deletes all files that are created in the current folder,
-        if not using 'start' asprof command, use '--no-download' to prevent
-        this. Environment variables available: @FSPATH (writable directory path,
-        always set), @ARGS (command arguments), @APP_NAME (application name),
-        @FILE_NAME (generated filename for file operations), and
-        @STATIC_FILE_NAME (without UUID). Use single quotes around --args to
-        prevent shell expansion.
-
-     asprof-start-cpu (recent SapMachine only)
-        Start an async-profiler CPU-time profile recording on a running Java
-        application
-
-     asprof-start-wall (recent SapMachine only)
-        Start an async-profiler wall-clock profile recording on a running Java
-        application
-
-     asprof-start-alloc (recent SapMachine only)
-        Start an async-profiler allocation profile recording on a running Java
-        application
-
-     asprof-start-lock (recent SapMachine only)
-        Start an async-profiler lock profile recording on a running Java
-        application
-
-     asprof-stop (recent SapMachine only)
-        Stop an async-profiler profile recording on a running Java application
-
-     asprof-status (recent SapMachine only)
-        Get the status of async-profiler on a running Java application
-
-     status (requires Java 17+ locally, supports --args, --full)
-        Quick status check of the remote JVM: deadlock detection, hot threads,
-        dependency graph, and more. Requires Java 17+ locally. Use --full for
-        comprehensive analysis. Pass additional options via --args (e.g.,
-        '--dumps 3'). See https://github.com/parttimenerd/jstall
-
-     jstall (requires Java 17+ locally, supports --args)
-        Inspect the remote JVM via JStall (runs on your machine, connects via cf
-        ssh). Requires Java 17+ locally. Pass jstall subcommands and options via
-        --args (default: 'status all'). See
-        https://github.com/parttimenerd/jstall
-
-     record-status (requires Java 17+ locally, supports --args, --full)
-        Record diagnostic data from the remote JVM via JStall and save to a
-        local zip file. Requires Java 17+ locally. Output file can be specified
-        as a trailing argument (default: APP_NAME-status.zip). Use --full for
-        comprehensive recording. See https://github.com/parttimenerd/jstall
-
-OPTIONS:
-   --app-instance-index      -i [index], select to which instance of the app to connect
-   --args                    -a, Miscellaneous arguments to pass to the command (if supported) in the
-                               container, be aware to end it with a space if it is a simple option. For
-                               commands that create arbitrary files (jcmd, asprof), the environment
-                               variables @FSPATH, @ARGS, @APP_NAME, @FILE_NAME, and @STATIC_FILE_NAME are
-                               available in --args to reference the working directory path, arguments,
-                               application name, and generated file name respectively.
-   --container-dir           -cd, the directory path in the container that the heap dump/JFR/... file will be
-                                saved to
-   --dry-run                 -n, just output to command line what would be executed
-   --full                    -f, enable full mode for more comprehensive JVM analysis (only for status and
-                               record-status)
-   --keep                    -k, keep the heap dump in the container; by default the heap dump/JFR/... will
-                               be deleted from the container's filesystem after being downloaded
-   --local-dir               -ld, the local directory path that the dump/JFR/... file will be saved to,
-                                defaults to the current directory
-   --no-download             -nd, don't download the heap dump/JFR/... file to local, only keep it in the
-                                container, implies '--keep'
-   --verbose                 enable verbose output for the plugin (note: -v is reserved by CF CLI)
-
-</pre>
+<!-- markdownlint-enable MD036 -->
+<!-- prettier-ignore-end -->
 
 ### Security Note on `--args`
 
 The `--args` parameter passes values directly into remote shell commands via `cf ssh`. This is by design to support
-shell features like environment variable expansion and piping. **Do not pass untrusted input to `--args`** — treat
-it with the same caution as a shell command.
+shell features like environment variable expansion and piping. **Do not pass untrusted input to `--args`** — treat it
+with the same caution as a shell command.
 
-The heap dumps and profiles will be downloaded to a local file automatically (to the current directory by default).
-Use `--local-dir` to specify a different download location. To save disk space of
-the application container, the files are automatically deleted unless the `-keep` option is set.
+The heap dumps and profiles will be downloaded to a local file automatically (to the current directory by default). Use
+`--local-dir` to specify a different download location. To save disk space of the application container, the files are
+automatically deleted unless the `--keep` option is set.
 
-Providing `-container-dir` is optional. If specified the plugin will create the heap dump or profile at the given file
+Providing `--container-dir` is optional. If specified the plugin will create the heap dump or profile at the given file
 path in the application container. Without providing this parameter, the file will be created either at `/tmp` or at the
 file path of a file system service if attached to the container.
 
 ```shell
-cf java [heap-dump|stop-jfr|stop-asprof] [my-app] -local-dir /local/path [-container-dir /var/fspath]
+cf java [heap-dump|jfr-stop|jfr-dump|asprof-stop] [my-app] --local-dir /local/path [--container-dir /var/fspath]
 ```
 
 Everything else, like thread dumps, will be output to `std-out`. You may want to redirect the command's output to file,
@@ -372,34 +264,41 @@ e.g., by executing:
 cf java thread-dump [my_app] -i [my_instance_index] > thread-dump.txt
 ```
 
-The `-k` flag is invalid when invoking non file producing commands. (Unlike with heap dumps, the JVM does not need to
-output the thread dump to file before streaming it out.)
+The `--keep` flag is invalid when invoking non file producing commands. (Unlike with heap dumps, the JVM does not need
+to output the thread dump to file before streaming it out.)
 
 ## Limitations
 
-Some commands depend on writable filesystem space inside the application container. In particular,
-`cf java heap-dump`, `cf java asprof-stop`, and `cf java jfr-stop` first create a file in the container, then stream
-that file back over SSH, and finally remove it again unless the `-k` flag is set.
+Some commands depend on writable filesystem space inside the application container. In particular, `cf java heap-dump`,
+`cf java asprof-stop`, and `cf java jfr-stop` first create a file in the container, then stream that file back over SSH,
+and finally remove it again unless the `--keep` flag is set.
 
 The available container filesystem space is controlled by the Cloud Foundry landscape configuration and may be limited.
 Heap dumps can be large, roughly scaling with heap usage, and profile files can also grow substantially depending on
 recording duration and settings. If the container does not have enough free space, the dump or recording cannot be
 created and the command will fail.
 
+The plugin uses `pidof java` to locate the target JVM inside the container. If a container runs multiple Java processes,
+the plugin may target the wrong one. In such cases, use `jcmd` with an explicit PID obtained via
+`cf ssh APP -c 'ps aux | grep java'`.
+
 The plugin is also constrained by limitations in the current `cf-cli` plugin framework:
 
+- `CF_TRACE=true` will break file-producing commands (`heap-dump`, `jfr-stop`, `asprof-stop`, `jcmd`). Disable
+  `CF_TRACE` before using these commands, or use `--dry-run` and run the generated command directly.
 - There is no distinction between `stdout` and `stderr` output from the underlying `cf ssh` command (see
   [this issue on the `cf-cli` project](https://github.com/cloudfoundry/cli/issues/1074))
-   - `cf java` will still usually exit with status code `1` when the underlying `cf ssh` command fails
-   - If you need separate `stdout` and `stderr`, run the plugin in dry-run mode (`--dry-run`) and execute the generated
-      command directly
+  - `cf java` will still usually exit with status code `1` when the underlying `cf ssh` command fails
+  - If you need separate `stdout` and `stderr`, run the plugin in dry-run mode (`--dry-run`) and execute the generated
+    command directly
 
 ### Known Command Limitations
 
 #### jstall Flame Graph May Fail in Containerized Environments
 
 The `jstall flame` command may fail with an error like:
-```
+
+```text
 Error: profiling was skipped: profiling-failed
 jstall execution failed: exit status 1
 ```
@@ -410,6 +309,7 @@ restricted in containerized environments for security reasons.
 **Workarounds:**
 
 1. Use async-profiler directly for CPU profiling:
+
    ```bash
    cf java asprof-start-cpu $APP_NAME
    # ... wait for profiling ...
@@ -417,6 +317,7 @@ restricted in containerized environments for security reasons.
    ```
 
 2. Use other jstall commands that don't require perf:
+
    ```bash
    cf java jstall $APP_NAME --args 'status all'      # JVM status & diagnostics
    cf java jstall $APP_NAME --args 'deadlock all'    # Deadlock detection
@@ -424,6 +325,7 @@ restricted in containerized environments for security reasons.
    ```
 
 3. Record diagnostic data for later analysis:
+
    ```bash
    cf java record-status $APP_NAME diagnostics.zip
    # Then replay locally
@@ -434,7 +336,8 @@ restricted in containerized environments for security reasons.
 
 When the plugin cannot establish SSH connectivity, it reports a categorized error message with likely causes and
 suggested next steps instead of only printing the raw `cf ssh` transport error. A typical message looks like:
-```
+
+```text
 Cannot connect to app 'APP_NAME' via SSH.
 Possible causes and solutions:
 1. SSH may not be enabled on the application. Try:
@@ -446,41 +349,40 @@ Possible causes and solutions:
 
 **Common causes and fixes:**
 
-| Error | Likely Cause | Solution |
-|-------|------|----------|
-| `connection refused` or `not enabled` | SSH not enabled on application | `cf enable-ssh APP_NAME && cf restart APP_NAME` |
-| `connection reset` | Network interruption | Retry the command; check internet connection |
-| `timeout` | Network unreachable | Check firewall/proxy settings; verify platform connectivity |
-| `Permission denied` | Authentication failed | `cf logout && cf login` with correct credentials |
+| Error                                 | Likely Cause                   | Solution                                                    |
+| ------------------------------------- | ------------------------------ | ----------------------------------------------------------- |
+| `connection refused` or `not enabled` | SSH not enabled on application | `cf enable-ssh APP_NAME && cf restart APP_NAME`             |
+| `connection reset`                    | Network interruption           | Retry the command; check internet connection                |
+| `timeout`                             | Network unreachable            | Check firewall/proxy settings; verify platform connectivity |
+| `Permission denied`                   | Authentication failed          | `cf logout && cf login` with correct credentials            |
 
 **Debugging:** If you need the original SSH transport error from Cloud Foundry, run `cf ssh APP_NAME -c 'echo ok'`
 directly.
 
 ## Side-effects on the running instance
 
-Storing dumps or profile recordings to the filesystem may lead to to not enough space on the filesystem been available
-for other tasks (e.g., temp files). In that case, the application in the container may suffer unexpected errors.
+Creating dumps and profile recordings consumes container filesystem space. If too much space is used, other operations
+inside the container (for example, writing temporary files) may fail, which can lead to unexpected application errors.
 
 ### Thread-Dumps
 
-Executing a thread dump via the `cf java` command does not have much of an overhead on the affected JVM. (Unless you
-have **a lot** of threads, that is.)
+Capturing a thread dump with `cf java` usually has low overhead on the JVM, unless the process has a very large number
+of threads.
 
 ### Heap-Dumps
 
-Heap dumps, on the other hand, have to be treated with a little more care. First of all, triggering the heap dump of a
-JVM makes the latter execute in most cases a full garbage collection, which will cause your JVM to become unresponsive
-for the duration. How much time is needed to execute the heap dump, depends on the size of the heap (the bigger, the
-slower), the algorithm used and, above all, whether your container is swapping memory to disk or not (swap is _bad_ for
-the JVM). Since Cloud Foundry allows for over-commit in its cells, it is possible that a container would begin swapping
-when executing a full garbage collection. (To be fair, it could be swapping even _before_ the garbage collection begins,
-but let's not knit-pick here.) So, it is theoretically possible that execuing a heap dump on a JVM in poor status of
-health will make it go even worse.
+Heap dumps require more care. Triggering a heap dump typically causes a full GC, during which the JVM can become
+temporarily unresponsive. The overall impact depends on heap size (larger heaps usually take longer), GC behavior, and
+especially whether the container is swapping memory to disk. Swapping is generally very costly for JVM performance.
+
+Because Cloud Foundry cells can be overcommitted, a container may begin swapping during dump generation (or may already
+be swapping before it starts). In stressed conditions, generating a heap dump can therefore further degrade application
+performance.
 
 ### Profiles
 
-Profiles might cause overhead depending on the configuration, but the default configurations typically have a limited
-overhead.
+Profiling introduces overhead that depends on the selected mode and settings, but default configurations are usually
+designed to keep that overhead moderate.
 
 ## Development
 
@@ -566,5 +468,5 @@ See [CHANGELOG.md](CHANGELOG.md) for a detailed list of changes.
 
 ## License
 
-Copyright 2017 - 2025 SAP SE or an SAP affiliate company and contributors. Please see our LICENSE for copyright and
+Copyright 2017 - 2026 SAP SE or an SAP affiliate company and contributors. Please see our LICENSE for copyright and
 license information.

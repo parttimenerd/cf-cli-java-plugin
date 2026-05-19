@@ -6,6 +6,9 @@ on:
       - main
       - master
 
+permissions:
+  contents: read
+
 jobs:
   validate-pr:
     name: Validate Pull Request

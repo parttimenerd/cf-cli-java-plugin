@@ -2,8 +2,8 @@
 
 ## 🎯 Overview
 
-The CF Java Plugin now includes comprehensive CI/CD integration with automated testing, linting,
-and quality assurance for both Go and Python codebases.
+The CF Java Plugin now includes comprehensive CI/CD integration with automated testing, linting, and quality assurance
+for both Go and Python codebases.
 
 ## 🏗️ CI/CD Pipeline
 
@@ -65,8 +65,8 @@ If found, runs Python linting validation. **Note: Python test execution is tempo
 - **[flake8](https://flake8.pycqa.org/)**: Line length 120, ignores E203,W503
 - **[black](https://black.readthedocs.io/)**: Line length 120, compatible with flake8
 - **[isort](https://pycqa.github.io/isort/)**: Black-compatible profile for import sorting
-- **[markdownlint](https://github.com/DavidAnson/markdownlint)**: Automated markdown formatting
-  (120 char limit, git-tracked files only)
+- **[markdownlint](https://github.com/DavidAnson/markdownlint)**: Automated markdown formatting (120 char limit,
+  git-tracked files only)
 
 ### Manual Usage
 

@@ -17,7 +17,7 @@ Python-specific linting and formatting script.
 **Modes:**
 
 - `check` (default): Check code quality without making changes
-- `fix`: Auto-fix formatting and import sorting issues  
+- `fix`: Auto-fix formatting and import sorting issues
 - `ci`: Strict checking for CI environments
 
 **Tools used:**
@@ -50,9 +50,9 @@ Go-specific linting and testing script.
 
 **Line Length Management:**
 
-The project enforces a 120-character line length limit via the `lll` linter. Note that Go
-formatters (`gofumpt`/`go fmt`) do not automatically wrap long lines - this is by design
-in the Go community. Manual line breaking is required for lines exceeding the limit.
+The project enforces a 120-character line length limit via the `lll` linter. Note that Go formatters
+(`gofumpt`/`go fmt`) do not automatically wrap long lines - this is by design in the Go community. Manual line breaking
+is required for lines exceeding the limit.
 
 ### `lint-markdown.sh`
 
@@ -148,7 +148,7 @@ This will install all required linters and development tools.
 ### GitHub Actions CI
 
 - **Build & Snapshot**: Uses `ci` mode for strict checking
-- **PR Validation**: Uses `ci` mode for comprehensive validation  
+- **PR Validation**: Uses `ci` mode for comprehensive validation
 - **Release**: Uses `check` and `test` modes
 
 ### Development Workflow
@@ -163,7 +163,7 @@ All linting tools are configured via:
 
 - `.golangci.yml`: golangci-lint configuration (enables all linters except gochecknoglobals)
 - `test/pyproject.toml`: Python tool configurations
-- `test/requirements.txt`: Python tool dependencies  
+- `test/requirements.txt`: Python tool dependencies
 - Project-level files: Go module and dependencies
 
 Virtual environments and build artifacts are automatically excluded from all linting operations.

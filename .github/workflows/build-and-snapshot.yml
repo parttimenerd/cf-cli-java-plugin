@@ -10,6 +10,9 @@ on:
     - cron: "0 0 * * 0" # Weekly on Sunday at midnight
   workflow_dispatch: # Allows manual triggering
 
+permissions:
+  contents: read
+
 jobs:
   lint-and-test-python:
     name: Lint Python Test Suite
@@ -92,6 +95,8 @@ jobs:
     needs: [build, lint-and-test-python]
     runs-on: ubuntu-latest
     if: (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && (needs.lint-and-test-python.result == 'success' || needs.lint-and-test-python.result == 'skipped')
+    permissions:
+      contents: write
 
     steps:
       - name: Checkout code
@@ -133,6 +138,12 @@ jobs:
         id: timestamp
         run: echo "timestamp=$(date -u +'%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_OUTPUT
 
+      - name: Get JStall version
+        id: jstall
+        run: |
+          JSTALL_VERSION=$(curl -s https://api.github.com/repos/parttimenerd/jstall/releases/latest | python3 -c "import sys,json; print(json.load(sys.stdin).get('tag_name','unknown'))")
+          echo "version=$JSTALL_VERSION" >> $GITHUB_OUTPUT
+
       - uses: thomashampson/delete-older-releases@main
         with:
           keep_latest: 0
@@ -167,6 +178,11 @@ jobs:
             Please test it and provide feedback.
 
             **Build Timestamp**: ${{ steps.timestamp.outputs.timestamp }}
+
+            **Bundled JStall version**: [${{ steps.jstall.outputs.version }}](https://github.com/parttimenerd/jstall/releases/tag/${{ steps.jstall.outputs.version }})
+
+            > **Tip:** You can also use a newer JStall version directly via `jstall --cf APP_NAME COMMAND`
+            > (see [JStall README](https://github.com/parttimenerd/jstall#usage)).
 
             ## Installation
 
