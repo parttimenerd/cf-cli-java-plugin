@@ -11,10 +11,11 @@ jobs:
   generate-plugin-repo:
     name: Generate Plugin Repository YAML
     runs-on: ubuntu-latest
+    environment: release
     
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@f43a0e5ff2bd294095638e18286ca9a3d1956744 # v3
 
       - name: Set up Python
         uses: actions/setup-python@v4

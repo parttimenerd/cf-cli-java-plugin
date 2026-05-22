@@ -94,6 +94,7 @@ jobs:
     name: Create Snapshot Release
     needs: [build, lint-and-test-python]
     runs-on: ubuntu-latest
+    environment: release
     if: (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && (needs.lint-and-test-python.result == 'success' || needs.lint-and-test-python.result == 'skipped')
     permissions:
       contents: write
@@ -144,7 +145,7 @@ jobs:
           JSTALL_VERSION=$(curl -s https://api.github.com/repos/parttimenerd/jstall/releases/latest | python3 -c "import sys,json; print(json.load(sys.stdin).get('tag_name','unknown'))")
           echo "version=$JSTALL_VERSION" >> $GITHUB_OUTPUT
 
-      - uses: thomashampson/delete-older-releases@main
+      - uses: thomashampson/delete-older-releases@2ff234dfe6ad2757ac7e53d96e298fbe82b0fd56 # @main
         with:
           keep_latest: 0
           delete_tag_regex: snapshot
@@ -163,7 +164,7 @@ jobs:
           git push origin snapshot --force
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@de2c0eb89ae2a093876385947365aca7b0e5f844 # v1
         with:
           files: |
             dist/*
