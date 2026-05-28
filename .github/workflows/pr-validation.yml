@@ -31,7 +31,7 @@ jobs:
       - name: Set up Node.js for markdownlint
         uses: actions/setup-node@v6
         with:
-          node-version: "18"
+          node-version: "24"
 
       - name: Download JStall minimal JAR for go:embed
         run: |
