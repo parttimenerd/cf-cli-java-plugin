@@ -78,32 +78,37 @@ jobs:
         run: |
           go install golang.org/x/vuln/cmd/govulncheck@latest
           # Run in JSON mode and emit GitHub Actions warning annotations for each finding.
-          # Exit code 3 means vulnerabilities found; remaining findings are stdlib-only
-          # (require Go 1.25.x) so we warn rather than fail.
+          # govulncheck outputs multi-line JSON objects (not line-delimited), so we use
+          # raw_decode to parse successive top-level objects from the output stream.
           govulncheck -json . 2>/dev/null | python3 -c "
           import sys, json
-          for line in sys.stdin:
-              line = line.strip()
-              if not line:
-                  continue
-              try:
-                  obj = json.loads(line)
-              except json.JSONDecodeError:
+          decoder = json.JSONDecoder()
+          data = sys.stdin.read().strip()
+          pos = 0
+          while pos < len(data):
+              obj, idx = decoder.raw_decode(data, pos)
+              pos = idx
+              while pos < len(data) and data[pos] in ' \t\n\r':
+                  pos += 1
+              if not isinstance(obj, dict):
                   continue
               finding = obj.get('finding')
               if not finding:
                   continue
               osv_id = finding.get('osv', '')
-              summary = finding.get('summary', osv_id)
               traces = finding.get('trace', [])
+              mod = traces[0].get('module', '') if traces else ''
+              ver = traces[0].get('version', '') if traces else ''
+              fixed = finding.get('fixed_version', '')
+              summary = f'{mod} {ver} is vulnerable ({osv_id}); fixed in {fixed}' if fixed else osv_id
               loc = ''
-              if traces:
-                  frame = traces[0]
-                  pos = frame.get('position', {})
-                  fname = pos.get('filename', '')
-                  line_no = pos.get('line', '')
+              for frame in reversed(traces):
+                  fpos = frame.get('position', {})
+                  fname = fpos.get('filename', '')
+                  line_no = fpos.get('line', '')
                   if fname:
                       loc = f'file={fname},line={line_no},'
+                      break
               print(f'::warning {loc}title=govulncheck [{osv_id}]::{summary}')
           " || true
 
