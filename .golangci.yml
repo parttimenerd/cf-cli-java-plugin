@@ -51,6 +51,8 @@ linters:
       # exec.Command(javaPath, ...) — resolved from JAVA_HOME/PATH, not user input.
       excludes:
         - G204  # Subprocess launched with variable
+    nolintlint:
+      allow-unused: true  # G702 nolint directives are unused on older linter versions
 
 
   disable:

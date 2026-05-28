@@ -32,7 +32,7 @@ func javaExecutable() string {
 }
 
 func getJavaMajorVersion(javaPath string) (int, error) {
-	cmd := exec.Command(javaPath, "-version")
+	cmd := exec.Command(javaPath, "-version") //nolint:gosec // G702: javaPath comes from findJava17Plus, resolved from JAVA_HOME or PATH
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return 0, err
@@ -235,7 +235,7 @@ func (c *JavaPlugin) executeJstall(appName string, jstallArgs string, appInstanc
 		}
 	}
 
-	cmd := exec.Command(javaPath, args...)
+	cmd := exec.Command(javaPath, args...) //nolint:gosec // G702: javaPath comes from findJava17Plus, resolved from JAVA_HOME or PATH
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Stdin = os.Stdin
