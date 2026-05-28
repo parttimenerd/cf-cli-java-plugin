@@ -1140,10 +1140,7 @@ func (c *JavaPlugin) execute(_ plugin.CliConnection, args []string) (string, err
 	fullCommand := append([]string{}, cfSSHArguments...)
 	fullCommand = append(fullCommand, remoteCommand)
 	c.logVerbosef("Executing command: %v", fullCommand)
-
-	cmdArgs := append([]string{"cf"}, fullCommand...)
-	c.logVerbosef("Executing command: %v", cmdArgs)
-	cmd := exec.Command(cmdArgs[0], cmdArgs[1:]...) //nolint:gosec // G702: cmdArgs[0] is always "cf", a hardcoded binary name
+	cmd := exec.Command("cf", fullCommand...)
 	outputBytes, err := cmd.CombinedOutput()
 	output := strings.TrimRight(string(outputBytes), "\n")
 	if err != nil {
