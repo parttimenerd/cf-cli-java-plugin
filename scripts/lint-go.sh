@@ -119,7 +119,17 @@ case "$MODE" in
             print_warning "golangci-lint not found, skipping comprehensive linting"
             print_info "Install with: go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest"
         fi
-    
+
+        echo "🔍 Running govulncheck..."
+        if command -v govulncheck >/dev/null 2>&1; then
+            # Report vulnerabilities but don't fail — remaining findings are stdlib-only
+            # and require a Go major version bump (1.25.x) to resolve.
+            govulncheck . || true
+        else
+            print_warning "govulncheck not found, skipping vulnerability scan"
+            print_info "Install with: go install golang.org/x/vuln/cmd/govulncheck@latest"
+        fi
+
         print_status "All Go linting checks passed!"
         ;;
 

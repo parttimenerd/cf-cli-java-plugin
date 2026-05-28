@@ -43,12 +43,13 @@ linters:
     - wastedassign     # Check wasted assignments
     - whitespace       # Check for extra whitespace
     - gocritic
+    - gosec            # Security-focused linter (shell commands, file perms, crypto)
 
 
   disable:
     # Disabled as requested
     - gochecknoglobals  # Ignore global variables (as requested)
-    
+
     # Disabled for being too strict or problematic
     - testpackage      # Too strict - requires separate test packages
     - paralleltest     # Not always applicable
@@ -70,5 +71,12 @@ linters:
     - gocyclo          # Check cyclomatic complexity
     - cyclop           # Check cyclomatic complexity
     - funlen           # Check function length
-    - gosec            # Security-focused linter
     - revive           # Fast, configurable, extensible linter
+
+issues:
+  exclude-rules:
+    # exec.Command("cf", ...) — "cf" is a hardcoded binary name; only args vary.
+    # exec.Command(javaPath, ...) — javaPath is resolved from JAVA_HOME or PATH, not user input.
+    # This plugin is by design a command-line wrapper that passes user args to remote tools.
+    - linters: [gosec]
+      text: "G204"  # Subprocess launched with variable

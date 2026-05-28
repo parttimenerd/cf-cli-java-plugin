@@ -185,7 +185,7 @@ func (c *JavaPlugin) checkSSHConnectivity(appName string, appInstanceIndex int) 
 	testArgs = append(testArgs, "-c", "echo ok")
 
 	c.logVerbosef("Checking SSH connectivity to app '%s'", appName)
-	cmd := exec.Command("cf", testArgs...)
+	cmd := exec.Command("cf", testArgs...) //nolint:gosec // "cf" is a hardcoded binary; only SSH args vary
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		c.logVerbosef("SSH connectivity check failed: %v", err)
@@ -1143,7 +1143,7 @@ func (c *JavaPlugin) execute(_ plugin.CliConnection, args []string) (string, err
 
 	cmdArgs := append([]string{"cf"}, fullCommand...)
 	c.logVerbosef("Executing command: %v", cmdArgs)
-	cmd := exec.Command(cmdArgs[0], cmdArgs[1:]...)
+	cmd := exec.Command(cmdArgs[0], cmdArgs[1:]...) //nolint:gosec // cmdArgs[0] is always "cf"; args are CF SSH arguments
 	outputBytes, err := cmd.CombinedOutput()
 	output := strings.TrimRight(string(outputBytes), "\n")
 	if err != nil {

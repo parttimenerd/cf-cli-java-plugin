@@ -130,7 +130,7 @@ func ensureJstallJar() (string, error) {
 		cacheDir = os.TempDir()
 	}
 	pluginCacheDir := filepath.Join(cacheDir, "cf-java-plugin")
-	if err := os.MkdirAll(pluginCacheDir, 0o755); err != nil {
+	if err := os.MkdirAll(pluginCacheDir, 0o755); err != nil { //nolint:gosec // 0755 is correct for a cache dir
 		return "", err
 	}
 	jarPath := filepath.Join(pluginCacheDir, "jstall-minimal.jar")
@@ -138,17 +138,17 @@ func ensureJstallJar() (string, error) {
 
 	// Check if cached JAR matches the embedded version by SHA-256 hash
 	expectedHash := jstallJarHash()
-	if cachedHash, err := os.ReadFile(hashPath); err == nil && string(cachedHash) == expectedHash {
+	if cachedHash, err := os.ReadFile(hashPath); err == nil && string(cachedHash) == expectedHash { //nolint:gosec // path is derived from UserCacheDir, not user input
 		if _, err := os.Stat(jarPath); err == nil {
 			return jarPath, nil
 		}
 	}
 
 	// Extract embedded JAR and write hash
-	if err := os.WriteFile(jarPath, jstallJarBytes, 0o644); err != nil {
+	if err := os.WriteFile(jarPath, jstallJarBytes, 0o644); err != nil { //nolint:gosec // 0644 is correct; JAR must be readable to execute
 		return "", err
 	}
-	if err := os.WriteFile(hashPath, []byte(expectedHash), 0o644); err != nil {
+	if err := os.WriteFile(hashPath, []byte(expectedHash), 0o644); err != nil { //nolint:gosec // 0644 is correct for a hash file
 		// Non-fatal: JAR is already written, just can't cache the hash
 		_ = err
 	}
@@ -218,7 +218,7 @@ func (c *JavaPlugin) executeJstall(appName string, jstallArgs string, appInstanc
 			testArgs = append(testArgs, "--app-instance-index", strconv.Itoa(appInstanceIndex))
 		}
 		testArgs = append(testArgs, "-c", "echo ok")
-		testCmd := exec.Command("cf", testArgs...)
+		testCmd := exec.Command("cf", testArgs...) //nolint:gosec // "cf" is a hardcoded binary; only SSH args vary
 		testOutput, testErr := testCmd.CombinedOutput()
 		if testErr != nil {
 			outputStr := strings.TrimSpace(string(testOutput))
@@ -229,7 +229,7 @@ func (c *JavaPlugin) executeJstall(appName string, jstallArgs string, appInstanc
 		}
 	}
 
-	cmd := exec.Command(javaPath, args...)
+	cmd := exec.Command(javaPath, args...) //nolint:gosec // javaPath is resolved from JAVA_HOME or PATH, not user input
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Stdin = os.Stdin

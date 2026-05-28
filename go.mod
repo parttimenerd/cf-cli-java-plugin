@@ -1,11 +1,10 @@
 module cf.plugin.ref/requires
 
-go 1.24.3
-
-toolchain go1.24.4
+go 1.24.6
 
 require (
 	code.cloudfoundry.org/cli v0.0.0-20250623142502-fb19e7a825ee
+	github.com/google/shlex v0.0.0-20191202100458-e7afc7fbc510
 	github.com/lithammer/fuzzysearch v1.1.8
 	github.com/simonleung8/flags v0.0.0-20170704170018-8020ed7bcf1a
 )
@@ -22,7 +21,6 @@ require (
 	github.com/cloudfoundry/bosh-utils v0.0.397 // indirect
 	github.com/cppforlife/go-patch v0.1.0 // indirect
 	github.com/fatih/color v1.18.0 // indirect
-	github.com/google/shlex v0.0.0-20191202100458-e7afc7fbc510 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/jessevdk/go-flags v1.6.1 // indirect
 	github.com/kr/pretty v0.3.1 // indirect

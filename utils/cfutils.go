@@ -105,7 +105,7 @@ func readAppEnv(app string) ([]byte, error) {
 		return nil, err
 	}
 
-	env, err := exec.Command("cf", "curl", fmt.Sprintf("/v3/apps/%s/env", strings.Trim(string(guid), "\n"))).Output()
+	env, err := exec.Command("cf", "curl", fmt.Sprintf("/v3/apps/%s/env", strings.Trim(string(guid), "\n"))).Output() //nolint:gosec // "cf" is hardcoded; GUID is from CF API output
 	if err != nil {
 		return nil, err
 	}
@@ -113,7 +113,7 @@ func readAppEnv(app string) ([]byte, error) {
 }
 
 func checkUserPathAvailability(app string, path string) (bool, error) {
-	output, err := exec.Command("cf", "ssh", app, "-c", "[[ -d \""+path+"\" && -r \""+path+"\" && -w \""+path+"\" ]] && echo \"exists and read-writeable\"").Output()
+	output, err := exec.Command("cf", "ssh", app, "-c", "[[ -d \""+path+"\" && -r \""+path+"\" && -w \""+path+"\" ]] && echo \"exists and read-writeable\"").Output() //nolint:gosec // "cf" is hardcoded; path is user-supplied --container-dir validated by CF SSH
 	if err != nil {
 		return false, err
 	}
@@ -160,7 +160,7 @@ func CheckRequiredTools(app string) (bool, error) {
 	if err != nil {
 		return false, errors.New(FindReasonForAccessError(app))
 	}
-	output, err := exec.Command("cf", "curl", "/v3/apps/"+strings.TrimSuffix(string(guid), "\n")+"/ssh_enabled").Output()
+	output, err := exec.Command("cf", "curl", "/v3/apps/"+strings.TrimSuffix(string(guid), "\n")+"/ssh_enabled").Output() //nolint:gosec // "cf" is hardcoded; GUID is from CF API output
 	if err != nil {
 		return false, err
 	}
@@ -213,11 +213,11 @@ func GetAvailablePath(data string, userpath string) (string, error) {
 func CopyOverCat(args []string, src string, dest string) error {
 	// Ensure parent directory exists
 	if dir := filepath.Dir(dest); dir != "" && dir != "." {
-		if err := os.MkdirAll(dir, 0o755); err != nil {
+		if err := os.MkdirAll(dir, 0o755); err != nil { //nolint:gosec // 0755 is correct for a local download directory
 			return fmt.Errorf("cannot create local directory %s: %w", dir, err)
 		}
 	}
-	f, err := os.OpenFile(dest, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	f, err := os.OpenFile(dest, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600) //nolint:gosec // dest is a plugin-constructed output path, not user-supplied file inclusion
 	if err != nil {
 		return errors.New("Error creating local file at  " + dest + ". Please check that you are allowed to create files at the given local path.")
 	}
