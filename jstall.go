@@ -170,6 +170,11 @@ func formatCommandForDisplay(command string, args []string) string {
 	return command + " " + strings.Join(displayArgs, " ")
 }
 
+// shellQuote wraps s in single quotes, escaping any single quotes within.
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
+}
+
 func (c *JavaPlugin) executeJstall(appName string, jstallArgs string, appInstanceIndex int, dryRun bool) (string, error) {
 	javaPath, err := findJava17Plus()
 	if err != nil {
@@ -188,7 +193,8 @@ func (c *JavaPlugin) executeJstall(appName string, jstallArgs string, appInstanc
 	// Build SSH command with PATH setup so jps/jcmd are discoverable on remote container
 	// SAP Java Buildpack puts JDK tools at deep paths not on $PATH
 	pathSetup := `JDK_BIN=$(dirname "$(find . -executable -name jps 2>/dev/null | head -1)" 2>/dev/null); if [ -n "$JDK_BIN" ]; then export PATH="$JDK_BIN:$PATH"; fi;`
-	sshCmd := "cf ssh " + appName
+	// Shell-quote appName to prevent command injection via a maliciously named CF app.
+	sshCmd := "cf ssh " + shellQuote(appName)
 	if appInstanceIndex != -1 {
 		sshCmd += " --app-instance-index " + strconv.Itoa(appInstanceIndex)
 	}
