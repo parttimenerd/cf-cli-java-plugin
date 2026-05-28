@@ -77,13 +77,35 @@ jobs:
       - name: Run govulncheck
         run: |
           go install golang.org/x/vuln/cmd/govulncheck@latest
-          # Exit code 3 means vulnerabilities found; we report them but only fail on
-          # non-stdlib findings (stdlib-only issues require a Go toolchain major bump).
-          govulncheck -json . 2>&1 | tee govulncheck.json || true
-          if govulncheck . 2>&1 | grep -q "^Vulnerability"; then
-            echo "⚠️  govulncheck found vulnerabilities — review govulncheck.json"
-            govulncheck . 2>&1 || true
-          fi
+          # Run in JSON mode and emit GitHub Actions warning annotations for each finding.
+          # Exit code 3 means vulnerabilities found; remaining findings are stdlib-only
+          # (require Go 1.25.x) so we warn rather than fail.
+          govulncheck -json . 2>/dev/null | python3 -c "
+          import sys, json
+          for line in sys.stdin:
+              line = line.strip()
+              if not line:
+                  continue
+              try:
+                  obj = json.loads(line)
+              except json.JSONDecodeError:
+                  continue
+              finding = obj.get('finding')
+              if not finding:
+                  continue
+              osv_id = finding.get('osv', '')
+              summary = finding.get('summary', osv_id)
+              traces = finding.get('trace', [])
+              loc = ''
+              if traces:
+                  frame = traces[0]
+                  pos = frame.get('position', {})
+                  fname = pos.get('filename', '')
+                  line_no = pos.get('line', '')
+                  if fname:
+                      loc = f'file={fname},line={line_no},'
+              print(f'::warning {loc}title=govulncheck [{osv_id}]::{summary}')
+          " || true
 
       - name: Lint and format Go files
         run: ./scripts/lint-go.sh ci

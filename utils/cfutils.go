@@ -105,7 +105,7 @@ func readAppEnv(app string) ([]byte, error) {
 		return nil, err
 	}
 
-	env, err := exec.Command("cf", "curl", fmt.Sprintf("/v3/apps/%s/env", strings.Trim(string(guid), "\n"))).Output() //nolint:gosec // "cf" is hardcoded; GUID is from CF API output
+	env, err := exec.Command("cf", "curl", fmt.Sprintf("/v3/apps/%s/env", strings.Trim(string(guid), "\n"))).Output()
 	if err != nil {
 		return nil, err
 	}
@@ -113,7 +113,7 @@ func readAppEnv(app string) ([]byte, error) {
 }
 
 func checkUserPathAvailability(app string, path string) (bool, error) {
-	output, err := exec.Command("cf", "ssh", app, "-c", "[[ -d \""+path+"\" && -r \""+path+"\" && -w \""+path+"\" ]] && echo \"exists and read-writeable\"").Output() //nolint:gosec // "cf" is hardcoded; path is user-supplied --container-dir validated by CF SSH
+	output, err := exec.Command("cf", "ssh", app, "-c", "[[ -d \""+path+"\" && -r \""+path+"\" && -w \""+path+"\" ]] && echo \"exists and read-writeable\"").Output()
 	if err != nil {
 		return false, err
 	}
@@ -160,7 +160,7 @@ func CheckRequiredTools(app string) (bool, error) {
 	if err != nil {
 		return false, errors.New(FindReasonForAccessError(app))
 	}
-	output, err := exec.Command("cf", "curl", "/v3/apps/"+strings.TrimSuffix(string(guid), "\n")+"/ssh_enabled").Output() //nolint:gosec // "cf" is hardcoded; GUID is from CF API output
+	output, err := exec.Command("cf", "curl", "/v3/apps/"+strings.TrimSuffix(string(guid), "\n")+"/ssh_enabled").Output()
 	if err != nil {
 		return false, err
 	}

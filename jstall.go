@@ -218,7 +218,7 @@ func (c *JavaPlugin) executeJstall(appName string, jstallArgs string, appInstanc
 			testArgs = append(testArgs, "--app-instance-index", strconv.Itoa(appInstanceIndex))
 		}
 		testArgs = append(testArgs, "-c", "echo ok")
-		testCmd := exec.Command("cf", testArgs...) //nolint:gosec // "cf" is a hardcoded binary; only SSH args vary
+		testCmd := exec.Command("cf", testArgs...)
 		testOutput, testErr := testCmd.CombinedOutput()
 		if testErr != nil {
 			outputStr := strings.TrimSpace(string(testOutput))
@@ -229,7 +229,7 @@ func (c *JavaPlugin) executeJstall(appName string, jstallArgs string, appInstanc
 		}
 	}
 
-	cmd := exec.Command(javaPath, args...) //nolint:gosec // javaPath is resolved from JAVA_HOME or PATH, not user input
+	cmd := exec.Command(javaPath, args...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Stdin = os.Stdin
