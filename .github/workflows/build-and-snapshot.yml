@@ -21,10 +21,10 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v6
         with:
           python-version: "3.11"
 
@@ -52,10 +52,10 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version: ${{ matrix.go-version }}
 
@@ -70,9 +70,48 @@ jobs:
         run: go mod tidy -e || true
 
       - name: Run golangci-lint
-        uses: golangci/golangci-lint-action@v8
+        uses: golangci/golangci-lint-action@v9
         with:
           version: latest
+
+      - name: Run govulncheck
+        shell: bash
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          # Run in JSON mode and emit GitHub Actions warning annotations for each finding.
+          # govulncheck outputs multi-line JSON objects (not line-delimited), so we use
+          # raw_decode to parse successive top-level objects from the output stream.
+          govulncheck -json . 2>/dev/null | python3 -c "
+          import sys, json
+          decoder = json.JSONDecoder()
+          data = sys.stdin.read().strip()
+          pos = 0
+          while pos < len(data):
+              obj, idx = decoder.raw_decode(data, pos)
+              pos = idx
+              while pos < len(data) and data[pos] in ' \t\n\r':
+                  pos += 1
+              if not isinstance(obj, dict):
+                  continue
+              finding = obj.get('finding')
+              if not finding:
+                  continue
+              osv_id = finding.get('osv', '')
+              traces = finding.get('trace', [])
+              mod = traces[0].get('module', '') if traces else ''
+              ver = traces[0].get('version', '') if traces else ''
+              fixed = finding.get('fixed_version', '')
+              summary = f'{mod} {ver} is vulnerable ({osv_id}); fixed in {fixed}' if fixed else osv_id
+              loc = ''
+              for frame in reversed(traces):
+                  fpos = frame.get('position', {})
+                  fname = fpos.get('filename', '')
+                  line_no = fpos.get('line', '')
+                  if fname:
+                      loc = f'file={fname},line={line_no},'
+                      break
+              print(f'::warning {loc}title=govulncheck [{osv_id}]::{summary}')
+          " || true
 
       - name: Lint and format Go files
         run: ./scripts/lint-go.sh ci
@@ -83,7 +122,7 @@ jobs:
           python3 .github/workflows/build.py
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: cf-cli-java-plugin-${{ matrix.os }}
           path: |
@@ -94,16 +133,17 @@ jobs:
     name: Create Snapshot Release
     needs: [build, lint-and-test-python]
     runs-on: ubuntu-latest
+    environment: release
     if: (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && (needs.lint-and-test-python.result == 'success' || needs.lint-and-test-python.result == 'skipped')
     permissions:
       contents: write
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v6
         with:
           python-version: "3.11"
 
@@ -113,7 +153,7 @@ jobs:
           pip install PyYAML
 
       - name: Download all artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: dist/
 
@@ -144,7 +184,7 @@ jobs:
           JSTALL_VERSION=$(curl -s https://api.github.com/repos/parttimenerd/jstall/releases/latest | python3 -c "import sys,json; print(json.load(sys.stdin).get('tag_name','unknown'))")
           echo "version=$JSTALL_VERSION" >> $GITHUB_OUTPUT
 
-      - uses: thomashampson/delete-older-releases@main
+      - uses: thomashampson/delete-older-releases@2ff234dfe6ad2757ac7e53d96e298fbe82b0fd56 # @main
         with:
           keep_latest: 0
           delete_tag_regex: snapshot
@@ -163,7 +203,7 @@ jobs:
           git push origin snapshot --force
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@de2c0eb89ae2a093876385947365aca7b0e5f844 # v1
         with:
           files: |
             dist/*

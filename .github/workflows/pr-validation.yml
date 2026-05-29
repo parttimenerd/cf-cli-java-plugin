@@ -16,22 +16,22 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version: ">=1.23.5"
 
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v6
         with:
           python-version: "3.11"
 
       - name: Set up Node.js for markdownlint
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
-          node-version: "18"
+          node-version: "24"
 
       - name: Download JStall minimal JAR for go:embed
         run: |
@@ -42,9 +42,47 @@ jobs:
         run: go mod tidy -e || true
 
       - name: Run golangci-lint
-        uses: golangci/golangci-lint-action@v8
+        uses: golangci/golangci-lint-action@v9
         with:
           version: latest
+
+      - name: Run govulncheck
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          # Run in JSON mode and emit GitHub Actions warning annotations for each finding.
+          # govulncheck outputs multi-line JSON objects (not line-delimited), so we use
+          # raw_decode to parse successive top-level objects from the output stream.
+          govulncheck -json . 2>/dev/null | python3 -c "
+          import sys, json
+          decoder = json.JSONDecoder()
+          data = sys.stdin.read().strip()
+          pos = 0
+          while pos < len(data):
+              obj, idx = decoder.raw_decode(data, pos)
+              pos = idx
+              while pos < len(data) and data[pos] in ' \t\n\r':
+                  pos += 1
+              if not isinstance(obj, dict):
+                  continue
+              finding = obj.get('finding')
+              if not finding:
+                  continue
+              osv_id = finding.get('osv', '')
+              traces = finding.get('trace', [])
+              mod = traces[0].get('module', '') if traces else ''
+              ver = traces[0].get('version', '') if traces else ''
+              fixed = finding.get('fixed_version', '')
+              summary = f'{mod} {ver} is vulnerable ({osv_id}); fixed in {fixed}' if fixed else osv_id
+              loc = ''
+              for frame in reversed(traces):
+                  fpos = frame.get('position', {})
+                  fname = fpos.get('filename', '')
+                  line_no = fpos.get('line', '')
+                  if fname:
+                      loc = f'file={fname},line={line_no},'
+                      break
+              print(f'::warning {loc}title=govulncheck [{osv_id}]::{summary}')
+          " || true
 
       - name: Lint Go code
         run: ./scripts/lint-go.sh ci

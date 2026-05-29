@@ -213,11 +213,11 @@ func GetAvailablePath(data string, userpath string) (string, error) {
 func CopyOverCat(args []string, src string, dest string) error {
 	// Ensure parent directory exists
 	if dir := filepath.Dir(dest); dir != "" && dir != "." {
-		if err := os.MkdirAll(dir, 0o755); err != nil {
+		if err := os.MkdirAll(dir, 0o755); err != nil { //nolint:gosec // 0755 is correct for a local download directory
 			return fmt.Errorf("cannot create local directory %s: %w", dir, err)
 		}
 	}
-	f, err := os.OpenFile(dest, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	f, err := os.OpenFile(dest, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600) //nolint:gosec // dest is a plugin-constructed output path, not user-supplied file inclusion
 	if err != nil {
 		return errors.New("Error creating local file at  " + dest + ". Please check that you are allowed to create files at the given local path.")
 	}

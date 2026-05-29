@@ -43,12 +43,22 @@ linters:
     - wastedassign     # Check wasted assignments
     - whitespace       # Check for extra whitespace
     - gocritic
+    - gosec            # Security-focused linter (shell commands, file perms, crypto)
+
+  settings:
+    gosec:
+      # exec.Command("cf", ...) — "cf" is a hardcoded binary; only SSH/CF args vary.
+      # exec.Command(javaPath, ...) — resolved from JAVA_HOME/PATH, not user input.
+      excludes:
+        - G204  # Subprocess launched with variable
+    nolintlint:
+      allow-unused: true  # G702 nolint directives are unused on older linter versions
 
 
   disable:
     # Disabled as requested
     - gochecknoglobals  # Ignore global variables (as requested)
-    
+
     # Disabled for being too strict or problematic
     - testpackage      # Too strict - requires separate test packages
     - paralleltest     # Not always applicable
@@ -70,5 +80,4 @@ linters:
     - gocyclo          # Check cyclomatic complexity
     - cyclop           # Check cyclomatic complexity
     - funlen           # Check function length
-    - gosec            # Security-focused linter
     - revive           # Fast, configurable, extensible linter

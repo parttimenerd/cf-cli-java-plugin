@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -251,9 +252,9 @@ var flagDefinitions = []FlagDefinition{
 	},
 	{
 		Name:        "verbose",
-		ShortName:   "v",
-		Usage:       "enable verbose output for the plugin",
-		Description: "enable verbose output for the plugin",
+		ShortName:   "",
+		Usage:       "enable verbose output for the plugin (note: -v is reserved by CF CLI)",
+		Description: "enable verbose output for the plugin (note: -v is reserved by CF CLI for its own trace mode and cannot be used as a shorthand here)",
 		Type:        typeBool,
 	},
 	{
@@ -291,13 +292,14 @@ func (c *JavaPlugin) createOptionsParser() flags.FlagContext {
 
 	// Create flags from centralized definitions
 	for _, flagDef := range flagDefinitions {
+		short := flagDef.ShortName
 		switch flagDef.Type {
 		case "int":
-			commandFlags.NewIntFlagWithDefault(flagDef.Name, flagDef.ShortName, flagDef.Usage, flagDef.DefaultInt)
+			commandFlags.NewIntFlagWithDefault(flagDef.Name, short, flagDef.Usage, flagDef.DefaultInt)
 		case "bool":
-			commandFlags.NewBoolFlag(flagDef.Name, flagDef.ShortName, flagDef.Usage)
+			commandFlags.NewBoolFlag(flagDef.Name, short, flagDef.Usage)
 		case "string":
-			commandFlags.NewStringFlag(flagDef.Name, flagDef.ShortName, flagDef.Usage)
+			commandFlags.NewStringFlag(flagDef.Name, short, flagDef.Usage)
 		}
 	}
 
@@ -845,6 +847,19 @@ func (c *JavaPlugin) execute(_ plugin.CliConnection, args []string) (string, err
 	localDir := options.LocalDir
 	if localDir == "" {
 		localDir = "."
+	} else {
+		// Expand tilde to home directory
+		if localDir == "~" || strings.HasPrefix(localDir, "~/") {
+			home, err := os.UserHomeDir()
+			if err == nil {
+				localDir = home + localDir[1:]
+			}
+		}
+		// Reject path traversal sequences
+		cleaned := filepath.Clean(localDir)
+		if strings.Contains(cleaned, "..") {
+			return "", &InvalidUsageError{message: "Error: --local-dir must not contain path traversal sequences (..)"}
+		}
 	}
 
 	c.logVerbosef("Remote directory: %s", remoteDir)
@@ -930,6 +945,10 @@ func (c *JavaPlugin) execute(_ plugin.CliConnection, args []string) (string, err
 		c.logVerbosef("Command %s does not support --args flag", command.Name)
 		return "", &InvalidUsageError{message: fmt.Sprintf("The flag %q is not supported for %s", "args", command.Name)}
 	}
+	// Reject whitespace-only --args
+	if options.Args != "" && strings.TrimSpace(options.Args) == "" {
+		return "", &InvalidUsageError{message: "Error: --args must not be empty or whitespace-only"}
+	}
 	// Validate that commands requiring @ARGS have arguments provided
 	if command.HasMiscArgs() && options.Args == "" && (command.Name == toolJcmd || command.Name == toolAsprof) {
 		c.logVerbosef("Command %s requires --args flag", command.Name)
@@ -943,6 +962,13 @@ func (c *JavaPlugin) execute(_ plugin.CliConnection, args []string) (string, err
 		return "", &InvalidUsageError{message: "No application name provided"}
 	} else if argumentLen > 2 && !command.AcceptsTrailingArgs {
 		return "", &InvalidUsageError{message: fmt.Sprintf("Too many arguments provided: %v", strings.Join(arguments[2:], ", "))}
+	}
+
+	// Validate --local-dir exists (catches errors early, including during dry-run)
+	if options.LocalDir != "" && (command.GenerateFiles || command.GenerateArbitraryFiles) {
+		if _, statErr := os.Stat(localDir); os.IsNotExist(statErr) {
+			return "", &InvalidUsageError{message: fmt.Sprintf("Error: --local-dir %q does not exist", localDir)}
+		}
 	}
 
 	applicationName := arguments[1]
@@ -1114,10 +1140,7 @@ func (c *JavaPlugin) execute(_ plugin.CliConnection, args []string) (string, err
 	fullCommand := append([]string{}, cfSSHArguments...)
 	fullCommand = append(fullCommand, remoteCommand)
 	c.logVerbosef("Executing command: %v", fullCommand)
-
-	cmdArgs := append([]string{"cf"}, fullCommand...)
-	c.logVerbosef("Executing command: %v", cmdArgs)
-	cmd := exec.Command(cmdArgs[0], cmdArgs[1:]...)
+	cmd := exec.Command("cf", fullCommand...)
 	outputBytes, err := cmd.CombinedOutput()
 	output := strings.TrimRight(string(outputBytes), "\n")
 	if err != nil {
