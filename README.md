@@ -69,6 +69,74 @@ cf install-plugin https://github.com/SAP/cf-cli-java-plugin/releases/download/sn
 cf install-plugin https://github.com/SAP/cf-cli-java-plugin/releases/download/snapshot/cf-cli-java-plugin-linux-arm64
 ```
 
+## Common Tasks
+
+### My CF app is not responding — find what it is stuck on
+
+Run `jstall` first — it detects deadlocks, identifies BLOCKED threads, and shows what
+each thread is waiting for:
+
+```bash
+cf java jstall $APP_NAME
+```
+
+If there is a deadlock, it will be listed at the top with the cycle of threads and monitors.
+For a focused deadlock check only:
+
+```bash
+cf java jstall $APP_NAME --args 'deadlock all'
+```
+
+If no deadlock, look for threads in `BLOCKED` state and the monitor they are waiting on.
+The thread that *holds* that monitor is the bottleneck. For a plain thread dump:
+
+```bash
+cf java thread-dump $APP_NAME
+```
+
+### My CF app is using too much CPU
+
+`most-work` takes repeated thread dumps and ranks threads by on-CPU frequency —
+no async-profiler needed:
+
+```bash
+cf java jstall $APP_NAME --args 'most-work --dumps 5 all'
+```
+
+For a proper CPU flame graph (slower, but much more detail):
+
+```bash
+cf java jstall $APP_NAME --args 'flame all'
+# Downloads an HTML flamegraph to your current directory
+```
+
+Or use the two-step async-profiler approach to capture a specific window:
+
+```bash
+cf java asprof-start-cpu $APP_NAME
+# reproduce the slow operation or wait 30–60 s
+cf java asprof-stop $APP_NAME
+# Downloads $APP_NAME-asprof-<random>.jfr — open in JDK Mission Control
+```
+
+### My CF app crashed with OutOfMemoryError — take a heap dump
+
+Take a heap dump from the running (or restarted) instance and download it:
+
+```bash
+cf java heap-dump $APP_NAME
+# Downloads $APP_NAME-heapdump-<random>.hprof to current directory
+```
+
+Analyse with [hprof-analyzer](https://github.com/parttimenerd/hprof-analyzer) for Leak Suspects and Top Consumers:
+
+```bash
+hprof-analyzer $APP_NAME-heapdump-*.hprof report.html
+# Open report.html → "Leak Suspects" and "Top Consumers" tabs
+```
+
+**Note:** requires jmap — see [Prerequisites](#prerequisites) if you see a "jmap not found" error.
+
 ## Usage
 
 ### Prerequisites
