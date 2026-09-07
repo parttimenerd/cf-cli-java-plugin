@@ -1,0 +1,113 @@
+tag: ready
+github_url: https://github.com/SAP/cf-cli-java-plugin
+tagline: Cloud Foundry CLI plugin to troubleshoot Java apps running on CF without SSH. Trigger heap
+  dumps, thread dumps, and async-profiler or JFR recordings from the cf command line, with results
+  streamed back to your machine. Also embeds jstall for full JVM inspection via `cf java jstall`.
+tagline_short: Trigger heap dumps, thread dumps, and profiles from the CF CLI — no SSH needed.
+when_to_use:
+- You run Java apps on Cloud Foundry and need heap dumps, thread dumps, or CPU profiles
+- You want jstall-style JVM inspection without SSH access to the container
+- You need to record JVM diagnostic data (status zip) for offline analysis
+when_not_to_use:
+- You are not using Cloud Foundry (use jstall directly for non-CF JVMs)
+- You need real-time continuous profiling rather than one-shot diagnostics
+related:
+- label: jstall
+  url: https://github.com/parttimenerd/jstall
+links:
+- label: CF Plugin Registry ↗
+  url: https://plugins.cloudfoundry.org/
+install:
+- label: Latest (manual)
+  lang: bash
+  code: |
+    # Pick the binary for your platform:
+    cf install-plugin https://github.com/SAP/cf-cli-java-plugin/releases/latest/download/cf-cli-java-plugin-macos-arm64
+    # linux-amd64 / linux-arm64 / windows-amd64 also available
+- label: CF Community
+  lang: bash
+  code: |
+    cf install-plugin -r CF-Community "java"
+    # Note: community repo lags behind GitHub releases
+usage:
+- label: Quick start
+  lang: bash
+  code: |
+    cf java heap-dump my-app
+    cf java thread-dump my-app
+    cf java jstall my-app
+how_to:
+- title: Take a heap dump from a running CF app
+  body: |
+    ```bash
+    cf java heap-dump $APP_NAME
+    ```
+    Downloads `$APP_NAME-heapdump-<random>.hprof` to your current directory.
+    Open it in VisualVM, Eclipse MAT, or IntelliJ's heap analyzer.
+
+    **Note:** requires jmap, which is not bundled by default in the CF Java Buildpack.
+    Add a full JDK via `JBP_CONFIG_OPEN_JDK_JRE: '[jre: {version: 21.+}, jdk: {include: true}]'`
+    to your app's environment if you see a "jmap not found" error.
+
+- title: Get a thread dump and spot deadlocks
+  body: |
+    ```bash
+    cf java thread-dump $APP_NAME
+    ```
+    Prints the full thread dump to stdout. To save it:
+    ```bash
+    cf java thread-dump $APP_NAME > thread-dump.txt
+    ```
+    For a richer analysis including deadlock detection, hot threads, and lock graphs, use jstall:
+    ```bash
+    cf java jstall $APP_NAME --args 'deadlock all'
+    ```
+
+- title: Profile CPU usage with async-profiler
+  body: |
+    ```bash
+    cf java asprof-start-cpu $APP_NAME
+    # reproduce the slow operation or wait 30–60 s
+    cf java asprof-stop $APP_NAME
+    # Downloads $APP_NAME-asprof-<random>.jfr
+    ```
+    Open the `.jfr` file in JDK Mission Control or IntelliJ to view the flame graph.
+    For a one-shot flame graph without manual start/stop, use jstall:
+    ```bash
+    cf java jstall $APP_NAME --args 'flame all'
+    ```
+
+- title: Record a full diagnostic snapshot for offline analysis
+  body: |
+    ```bash
+    # Record everything (thread dump, heap histogram, jcmd output) into a zip:
+    cf java record-status $APP_NAME
+
+    # Include JFR recording and flame graph (slower, larger):
+    cf java record-status $APP_NAME --full
+
+    # Replay the zip locally with jstall:
+    jstall -f $APP_NAME-status.zip status all
+    jstall -f $APP_NAME-status.zip threads all
+    ```
+    Useful for sharing diagnostics with teammates or filing bug reports without
+    giving them CF access.
+
+- title: Inspect a Cloud Foundry app with jstall
+  body: |
+    The plugin embeds jstall directly — no separate installation needed:
+    ```bash
+    # Full status report (deadlock detection, hot threads, etc.):
+    cf java jstall $APP_NAME
+
+    # Run a specific jstall subcommand:
+    cf java jstall $APP_NAME --args 'most-work --dumps 3 all'
+    cf java jstall $APP_NAME --args 'flame all'
+    ```
+    To use a newer jstall version than the one bundled in the plugin,
+    use jstall's own `--cf` option instead:
+    ```bash
+    jstall --cf $APP_NAME status all
+    ```
+note: Requires cf ssh to be enabled on the app (`cf enable-ssh my-app`, then restart).
+  The heap-dump command additionally needs jmap — see the How To entry above if it is missing.
