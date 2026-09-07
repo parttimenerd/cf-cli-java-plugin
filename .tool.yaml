@@ -37,6 +37,60 @@ usage:
     cf java thread-dump my-app
     cf java jstall my-app
 how_to:
+- title: My CF app is not responding — find what it is stuck on
+  body: |
+    Run `jstall` first — it detects deadlocks, identifies BLOCKED threads, and shows what
+    each thread is waiting for:
+    ```bash
+    cf java jstall $APP_NAME
+    ```
+    If there is a deadlock, it will be listed at the top with the cycle of threads and monitors.
+    For a focused deadlock check only:
+    ```bash
+    cf java jstall $APP_NAME --args 'deadlock all'
+    ```
+    If no deadlock, look for threads in `BLOCKED` state and the monitor they are waiting on.
+    The thread that *holds* that monitor is the bottleneck. For a plain thread dump:
+    ```bash
+    cf java thread-dump $APP_NAME
+    ```
+
+- title: My CF app is using too much CPU
+  body: |
+    `most-work` takes repeated thread dumps and ranks threads by on-CPU frequency —
+    no async-profiler needed:
+    ```bash
+    cf java jstall $APP_NAME --args 'most-work --dumps 5 all'
+    ```
+    For a proper CPU flame graph (slower, but much more detail):
+    ```bash
+    cf java jstall $APP_NAME --args 'flame all'
+    # Downloads an HTML flamegraph to your current directory
+    ```
+    Or use the two-step async-profiler approach if you want to capture during a specific window:
+    ```bash
+    cf java asprof-start-cpu $APP_NAME
+    # reproduce the slow operation or wait 30–60 s
+    cf java asprof-stop $APP_NAME
+    # Downloads $APP_NAME-asprof-<random>.jfr — open in JDK Mission Control
+    ```
+
+- title: My CF app crashed with OutOfMemoryError — take a heap dump
+  body: |
+    Take a heap dump from the running (or restarted) instance and download it:
+    ```bash
+    cf java heap-dump $APP_NAME
+    # Downloads $APP_NAME-heapdump-<random>.hprof to current directory
+    ```
+    Analyse with hprof-analyzer for Leak Suspects and Top Consumers:
+    ```bash
+    hprof-analyzer $APP_NAME-heapdump-*.hprof report.html
+    # Open report.html → "Leak Suspects" and "Top Consumers" tabs
+    ```
+    **Note:** requires jmap, which is not bundled by default in the CF Java Buildpack.
+    Add a full JDK via `JBP_CONFIG_OPEN_JDK_JRE: '[jre: {version: 21.+}, jdk: {include: true}]'`
+    to your app's environment if you see a "jmap not found" error.
+
 - title: Take a heap dump from a running CF app
   body: |
     ```bash
