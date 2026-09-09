@@ -25,7 +25,7 @@ import (
 var jstallJarBytes []byte
 
 func javaExecutable() string {
-	if runtime.GOOS == "windows" {
+	if runtime.GOOS == osWindows {
 		return "java.exe"
 	}
 	return cmdJava
@@ -76,7 +76,7 @@ func platformJavaCandidates() []string {
 	case "linux":
 		matches, _ := filepath.Glob("/usr/lib/jvm/*/bin/" + exe)
 		candidates = append(candidates, matches...)
-	case "windows":
+	case osWindows:
 		for _, envVar := range []string{"ProgramFiles", "ProgramFiles(x86)", "ProgramW6432"} {
 			base := os.Getenv(envVar)
 			if base == "" {

@@ -31,19 +31,24 @@ var _ plugin.Plugin = (*JavaPlugin)(nil)
 
 // String constants extracted to satisfy goconst linter.
 const (
-	cmdSSH           = "ssh"
-	cmdJava          = "java"
-	flagKeep         = "keep"
-	flagNoDownload   = "no-download"
-	flagContainerDir = "container-dir"
-	flagLocalDir     = "local-dir"
-	typeBool         = "bool"
-	typeString       = "string"
-	toolJcmd         = "jcmd"
-	toolAsprof       = "asprof"
-	extJFR           = ".jfr"
-	labelJFR         = "JFR recording"
-	partJFR          = "jfr"
+	cmdSSH             = "ssh"
+	cmdJava            = "java"
+	flagKeep           = "keep"
+	flagNoDownload     = "no-download"
+	flagContainerDir   = "container-dir"
+	flagLocalDir       = "local-dir"
+	flagRedact         = "redact"
+	flagRedactComplete = "redact-complete"
+	flagCompress       = "compress"
+	osWindows          = "windows"
+	cmdHeapDump        = "heap-dump"
+	typeBool           = "bool"
+	typeString         = "string"
+	toolJcmd           = "jcmd"
+	toolAsprof         = "asprof"
+	extJFR             = ".jfr"
+	labelJFR           = "JFR recording"
+	partJFR            = "jfr"
 )
 
 // JavaPlugin is a CF CLI plugin that supports taking heap and thread dumps on demand
@@ -207,6 +212,9 @@ type Options struct {
 	ContainerDir     string
 	LocalDir         string
 	Args             string
+	Redact           bool
+	RedactComplete   bool
+	Compress         bool
 }
 
 // FlagDefinition holds metadata for a command-line flag
@@ -285,6 +293,21 @@ var flagDefinitions = []FlagDefinition{
 		Description: "Miscellaneous arguments to pass to the command (if supported) in the container, be aware to end it with a space if it is a simple option. For commands that create arbitrary files (jcmd, asprof), the environment variables @FSPATH, @ARGS, @APP_NAME, @FILE_NAME, and @STATIC_FILE_NAME are available in --args to reference the working directory path, arguments, application name, and generated file name respectively.",
 		Type:        typeString,
 	},
+	{
+		Name:  flagRedact,
+		Usage: "redact heap dump (lean mode: zero primitive arrays only) before saving locally",
+		Type:  typeBool,
+	},
+	{
+		Name:  flagRedactComplete,
+		Usage: "redact heap dump (complete mode: zero all primitive values) before saving locally",
+		Type:  typeBool,
+	},
+	{
+		Name:  flagCompress,
+		Usage: "compress heap dump on container using jmap gz=1 (JDK 17+) to reduce transfer size; output is .hprof.gz",
+		Type:  typeBool,
+	},
 }
 
 func (c *JavaPlugin) createOptionsParser() flags.FlagContext {
@@ -350,6 +373,15 @@ func (c *JavaPlugin) parseOptions(args []string) (*Options, []string, error) {
 		ContainerDir:     commandFlags.String("container-dir"),
 		LocalDir:         commandFlags.String("local-dir"),
 		Args:             commandFlags.String("args"),
+		Redact:           commandFlags.IsSet(flagRedact),
+		RedactComplete:   commandFlags.IsSet(flagRedactComplete),
+		Compress:         commandFlags.IsSet(flagCompress),
+	}
+
+	if options.Redact && options.RedactComplete {
+		return nil, nil, &InvalidUsageError{
+			message: "Error: flags '--redact' and '--redact-complete' are mutually exclusive",
+		}
 	}
 
 	return options, commandFlags.Args(), nil
@@ -516,7 +548,7 @@ func (c *JavaPlugin) replaceVariables(command, appName, fspath, fileName, static
 
 var commands = []Command{
 	{
-		Name:          "heap-dump",
+		Name:          cmdHeapDump,
 		Description:   "Generate a heap dump from a running Java application",
 		GenerateFiles: true,
 		FileExtension: ".hprof",
@@ -545,12 +577,12 @@ if [ -z "${JMAP_COMMAND}" ] && [ -z "${JVMMON_COMMAND}" ]; then
 		  buildpack: https://github.com/cloudfoundry/java-buildpack
 		  env:
 			JBP_CONFIG_OPEN_JDK_JRE: '{ jre: { repository_root: "https://java-buildpack.cloudfoundry.org/openjdk-jdk/jammy/x86_64", version: 21.+ } }'
-		
+
 	"
   exit 1
 fi
 if [ -n "${JMAP_COMMAND}" ]; then
-OUTPUT=$( ${JMAP_COMMAND} -dump:format=b,file=@FILE_NAME $(pidof java) ) || STATUS_CODE=$?
+OUTPUT=$( ${JMAP_COMMAND} -dump:format=b@JMAP_GZ,file=@FILE_NAME $(pidof java) ) || STATUS_CODE=$?
 if [ ! -s @FILE_NAME ]; then echo >&2 ${OUTPUT}; exit 1; fi
 if [ ${STATUS_CODE:-0} -gt 0 ]; then echo >&2 ${OUTPUT}; exit ${STATUS_CODE}; fi
 elif [ -n "${JVMMON_COMMAND}" ]; then
@@ -561,6 +593,7 @@ HEAP_DUMP_NAME=$(find @FSPATH -name 'java_pid*.hprof' -printf '%T@ %p\0' | sort 
 SIZE=-1; OLD_SIZE=$(stat -c '%s' "${HEAP_DUMP_NAME}"); while [ ${SIZE} != ${OLD_SIZE} ]; do OLD_SIZE=${SIZE}; sleep 3; SIZE=$(stat -c '%s' "${HEAP_DUMP_NAME}"); done
 if [ ! -s "${HEAP_DUMP_NAME}" ]; then echo >&2 ${OUTPUT}; exit 1; fi
 if [ ${STATUS_CODE:-0} -gt 0 ]; then echo >&2 ${OUTPUT}; exit ${STATUS_CODE}; fi
+if [ -n "@COMPRESS_FLAG" ]; then gzip -1 "${HEAP_DUMP_NAME}" && HEAP_DUMP_NAME="${HEAP_DUMP_NAME}.gz"; fi
 fi`,
 		FileLabel:    "heap dump",
 		FileNamePart: "heapdump",
@@ -1066,6 +1099,10 @@ func (c *JavaPlugin) execute(_ plugin.CliConnection, args []string) (string, err
 	fileName := ""
 	staticFileName := ""
 	fspath := remoteDir
+	fileExt := command.FileExtension
+	if command.Name == cmdHeapDump && options.Compress {
+		fileExt = ".hprof.gz"
+	}
 
 	// Initialize fspath and fileName for commands that need them
 	if command.GenerateFiles || command.NeedsFileName || command.GenerateArbitraryFiles {
@@ -1098,13 +1135,23 @@ func (c *JavaPlugin) execute(_ plugin.CliConnection, args []string) (string, err
 		if command.FileNamePart != "" {
 			namePart = "-" + command.FileNamePart
 		}
-		fileName = fspath + "/" + applicationName + namePart + "-" + utils.GenerateUUID() + command.FileExtension
-		staticFileName = fspath + "/" + applicationName + namePart + command.FileExtension
+		fileName = fspath + "/" + applicationName + namePart + "-" + utils.GenerateUUID() + fileExt
+		staticFileName = fspath + "/" + applicationName + namePart + fileExt
 		c.logVerbosef("Generated filename: %s", fileName)
 		c.logVerbosef("Generated static filename without UUID: %s", staticFileName)
 	}
 
 	commandText := command.SSHCommand
+	// Expand compress placeholders for heap-dump before the general variable substitution
+	if command.Name == cmdHeapDump {
+		if options.Compress {
+			commandText = strings.ReplaceAll(commandText, "@JMAP_GZ", ",gz=1")
+			commandText = strings.ReplaceAll(commandText, "@COMPRESS_FLAG", "1")
+		} else {
+			commandText = strings.ReplaceAll(commandText, "@JMAP_GZ", "")
+			commandText = strings.ReplaceAll(commandText, "@COMPRESS_FLAG", "")
+		}
+	}
 	// Perform variable replacements directly in Go code
 	var err2 error
 	commandText, err2 = c.replaceVariables(commandText, applicationName, fspath, fileName, staticFileName, options.Args)
@@ -1161,15 +1208,18 @@ func (c *JavaPlugin) execute(_ plugin.CliConnection, args []string) (string, err
 
 		var finalFile string
 		var err error
-		switch command.FileExtension {
+		switch fileExt {
 		case ".hprof":
 			c.logVerbosef("Finding heap dump file")
 			finalFile, err = utils.FindHeapDumpFile(cfSSHArguments, fileName, fspath, applicationName+"-"+command.FileNamePart)
+		case ".hprof.gz":
+			c.logVerbosef("Finding compressed heap dump file")
+			finalFile, err = utils.FindHeapDumpGzFile(cfSSHArguments, fileName, fspath, applicationName+"-"+command.FileNamePart)
 		case ".jfr":
 			c.logVerbosef("Finding JFR file")
 			finalFile, err = utils.FindJFRFile(cfSSHArguments, fileName, fspath, applicationName+"-"+command.FileNamePart)
 		default:
-			return "", &InvalidUsageError{message: fmt.Sprintf("Unsupported file extension %q", command.FileExtension)}
+			return "", &InvalidUsageError{message: fmt.Sprintf("Unsupported file extension %q", fileExt)}
 		}
 		if err == nil && finalFile != "" {
 			fileName = finalFile
@@ -1189,12 +1239,29 @@ func (c *JavaPlugin) execute(_ plugin.CliConnection, args []string) (string, err
 			return output, nil
 		}
 
-		localFileFullPath := localDir + "/" + applicationName + "-" + command.FileNamePart + "-" + utils.GenerateUUID() + command.FileExtension
+		localFileFullPath := localDir + "/" + applicationName + "-" + command.FileNamePart + "-" + utils.GenerateUUID() + fileExt
 		c.logVerbosef("Downloading file to: %s", localFileFullPath)
 		err = utils.CopyOverCat(cfSSHArguments, fileName, localFileFullPath)
 		if err == nil {
 			c.logVerbosef("File download completed successfully")
 			fmt.Println(utils.ToSentenceCase(command.FileLabel) + " file saved to: " + localFileFullPath)
+
+			if command.Name == cmdHeapDump && (options.Redact || options.RedactComplete) {
+				mode := "lean"
+				if options.RedactComplete {
+					mode = "complete"
+				}
+				redactBin, rerr := ensureHprofRedact()
+				if rerr != nil {
+					return "", fmt.Errorf("hprof-redact unavailable: %w", rerr)
+				}
+				localIsGz := strings.HasSuffix(localFileFullPath, ".hprof.gz")
+				finalPath, rerr := pipeHeapDumpThroughRedact(redactBin, localFileFullPath, mode, options.Compress || localIsGz)
+				if rerr != nil {
+					return "", fmt.Errorf("redaction failed (unredacted file at %s): %w", localFileFullPath, rerr)
+				}
+				fmt.Println("Redacted heap dump saved to: " + finalPath)
+			}
 		} else {
 			c.logVerbosef("File download failed: %v", err)
 			fmt.Fprintf(os.Stderr, "The %s was created successfully in the container at: %s\n", command.FileLabel, fileName)

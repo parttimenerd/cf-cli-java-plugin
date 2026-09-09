@@ -262,6 +262,11 @@ func FindHeapDumpFile(args []string, fullpath string, fspath string, namePrefix 
 	return FindFile(args, fullpath, fspath, "*.hprof", namePrefix)
 }
 
+// FindHeapDumpGzFile locates gzip-compressed heap dump files (*.hprof.gz) on the remote container.
+func FindHeapDumpGzFile(args []string, fullpath string, fspath string, namePrefix string) (string, error) {
+	return FindFile(args, fullpath, fspath, "*.hprof.gz", namePrefix)
+}
+
 // FindJFRFile locates Java Flight Recorder files (*.jfr) in the specified path on the remote container.
 func FindJFRFile(args []string, fullpath string, fspath string, namePrefix string) (string, error) {
 	return FindFile(args, fullpath, fspath, "*.jfr", namePrefix)
