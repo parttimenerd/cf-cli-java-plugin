@@ -339,7 +339,10 @@ func (c *JavaPlugin) parseOptions(args []string) (*Options, []string, error) {
 	}
 
 	appInstanceIndex := commandFlags.Int("app-instance-index")
-	appInstanceIndexSet := commandFlags.IsSet("app-instance-index")
+	// simonleung8/flags registers flags with non-zero defaults in flagsets at init time,
+	// so IsSet() returns true even when the flag was not explicitly provided.
+	// Check against the known default (-1) to detect actual user-provided values.
+	appInstanceIndexSet := commandFlags.IsSet("app-instance-index") && appInstanceIndex != -1
 	keep := commandFlags.IsSet("keep")
 	noDownload := commandFlags.IsSet("no-download")
 
@@ -1021,13 +1024,15 @@ func (c *JavaPlugin) execute(_ plugin.CliConnection, args []string) (string, err
 
 	c.logVerbosef("CF SSH arguments: %v", cfSSHArguments)
 
-	supported, err := utils.CheckRequiredTools(applicationName)
+	if !options.DryRun {
+		supported, err := utils.CheckRequiredTools(applicationName)
 
-	if err != nil || !supported {
-		return "required tools checking failed", err
+		if err != nil || !supported {
+			return "required tools checking failed", err
+		}
+
+		c.logVerbosef("Required tools check passed")
 	}
-
-	c.logVerbosef("Required tools check passed")
 
 	if command.IsLocal {
 		c.logVerbosef("Executing local command: %s", command.Name)
@@ -1103,6 +1108,7 @@ func (c *JavaPlugin) execute(_ plugin.CliConnection, args []string) (string, err
 	staticFileName := ""
 	fspath := remoteDir
 	fileExt := command.FileExtension
+	var err error
 	if command.Name == cmdHeapDump && options.Compress {
 		// Only set .hprof.gz for jvmmon path (explicit compress); jmap always writes .hprof on remote
 		fileExt = extHprof
