@@ -9,12 +9,14 @@ work with Java applications deployed on Cloud Foundry by the [SapMachine](https:
 
 Currently, it allows you to:
 
-- Trigger and retrieve a heap dump and a thread dump from a Cloud Foundry Java application
-- Run jcmd remotely on your application
-- Start, stop and retrieve JFR and [async-profiler](https://github.com/jvm-profiling-tools/async-profiler)
-  ([SapMachine](https://sapmachine.io) only) profiles from your application
+- Capture heap dumps and thread dumps from a running Cloud Foundry Java application
+- Run `jcmd` remotely against your application
+- Start, stop, and retrieve JFR and [async-profiler](https://github.com/jvm-profiling-tools/async-profiler)
+  ([SapMachine](https://sapmachine.io) only) profiles
 - Run [jstall](https://github.com/parttimenerd/jstall) for one-shot JVM inspection (deadlock detection, hot threads,
   dependency graphs, and more): bundled directly in the plugin, requires Java 17+ locally
+- Redact heap dumps before saving to remove sensitive data (`--redact`, `--redact-complete`)
+- Reduce transfer size by compressing heap dumps over SSH (`--compress`)
 
 ## Installation
 
@@ -124,43 +126,47 @@ is not in `cf java`, but in whatever makes `cf ssh` fail.
 
 ### Examples
 
-Getting a heap-dump:
+Getting a heap dump:
 
 ```sh
-> cf java heap-dump $APP_NAME
--> ./$APP_NAME-heapdump-$RANDOM.hprof
+# Basic — plain .hprof saved locally
+cf java heap-dump $APP_NAME
+
+# Redact sensitive values (passwords, tokens, personal data) before saving
+cf java heap-dump $APP_NAME --redact            # lean: zeros primitive arrays
+cf java heap-dump $APP_NAME --redact-complete   # complete: zeros all primitive values
+
+# Compress the output (JDK 17+ on container required; falls back to uncompressed otherwise)
+cf java heap-dump $APP_NAME --compress          # saves as .hprof.gz
+
+# Redact and compress
+cf java heap-dump $APP_NAME --redact --compress
 ```
 
-Getting a thread-dump:
+Getting a thread dump:
 
 ```sh
-> cf java thread-dump $APP_NAME
-...
-Full thread dump OpenJDK 64-Bit Server VM ...
-...
+cf java thread-dump $APP_NAME
 ```
 
-Creating a CPU-time profile via async-profiler:
+Creating a CPU profile via async-profiler:
 
 ```sh
-> cf java asprof-start-cpu $APP_NAME
-Profiling started
+cf java asprof-start-cpu $APP_NAME
 # wait some time to gather data
-> cf java asprof-stop $APP_NAME
--> ./$APP_NAME-asprof-$RANDOM.jfr
+cf java asprof-stop $APP_NAME
 ```
 
-Running arbitrary JCMD commands, like `VM.uptime`:
+Running arbitrary jcmd commands, like `VM.uptime`:
 
 ```sh
-> cf java jcmd $APP_NAME --args 'VM.uptime'
-$TIME s
+cf java jcmd $APP_NAME --args 'VM.uptime'
 ```
 
 Quick status check of the remote JVM (requires Java 17+ locally):
 
 ```sh
-> cf java status $APP_NAME
+cf java status $APP_NAME
 ```
 
 Running [JStall](https://github.com/parttimenerd/jstall) for more specific JVM inspection (requires Java 17+ locally):
@@ -245,27 +251,59 @@ The `--args` parameter passes values directly into remote shell commands via `cf
 shell features like environment variable expansion and piping. **Do not pass untrusted input to `--args`** — treat it
 with the same caution as a shell command.
 
+### File Output
+
 The heap dumps and profiles will be downloaded to a local file automatically (to the current directory by default). Use
 `--local-dir` to specify a different download location. To save disk space of the application container, the files are
 automatically deleted unless the `--keep` option is set.
 
-Providing `--container-dir` is optional. If specified the plugin will create the heap dump or profile at the given file
-path in the application container. Without providing this parameter, the file will be created either at `/tmp` or at the
-file path of a file system service if attached to the container.
+Providing `--container-dir` is optional. If specified, the plugin will create the heap dump or profile at that path
+inside the application container. Without it, the file is created at `/tmp` or at the mount point of an attached
+file system service.
 
 ```shell
 cf java [heap-dump|jfr-stop|jfr-dump|asprof-stop] [my-app] --local-dir /local/path [--container-dir /var/fspath]
 ```
 
-Everything else, like thread dumps, will be output to `std-out`. You may want to redirect the command's output to file,
-e.g., by executing:
+Thread dumps are streamed to stdout. To save one to a file:
 
 ```shell
 cf java thread-dump [my_app] -i [my_instance_index] > thread-dump.txt
 ```
 
-The `--keep` flag is invalid when invoking non file producing commands. (Unlike with heap dumps, the JVM does not need
-to output the thread dump to file before streaming it out.)
+The `--keep` flag is not applicable to commands that stream output directly (e.g., `thread-dump`).
+
+### Heap Dump Privacy
+
+Heap dumps contain the full in-memory state of a JVM, including strings, byte arrays, and field values, which can
+hold passwords, tokens, session data, or personal information. Before sharing a dump outside a trusted environment,
+use `--redact` or `--redact-complete` to zero out sensitive values.
+
+| Flag | What gets zeroed |
+|------|-----------------|
+| `--redact` | Primitive arrays (`byte[]`, `char[]`, `int[]`, …) — covers most strings and serialized data |
+| `--redact-complete` | All primitive arrays **and** individual primitive fields — maximum privacy |
+
+Both modes preserve the full object graph (class names, references, instance counts), so the dump remains useful for
+memory analysis. The two flags are mutually exclusive.
+
+The redacted file is saved locally with a `-redacted` suffix; the original unredacted file is deleted automatically.
+Use `--redact --compress` to also compress the output (produces a `.hprof.gz`).
+
+Redaction runs locally via the bundled [hprof-redact](https://github.com/parttimenerd/hprof-analyzer) binary after
+the dump is downloaded. Supported platforms: Linux (x86_64, arm64), macOS (Apple Silicon), Windows (x86_64, arm64).
+
+### Compressed Transfer
+
+When bandwidth or container disk space is a concern, use `--compress` to transfer the dump in gzip format.
+
+- On **JDK 17+**: `jmap` compresses the dump on the container before transfer; the local file is saved as `.hprof.gz`.
+- On **JDK < 17**: the container JDK does not support `gz=1`; a warning is printed and the dump is downloaded
+  uncompressed as usual.
+
+Without `--compress`, the plugin still uses `gz=1` automatically when the remote JDK supports it — the transfer is
+compressed but the local file is transparently decompressed to a plain `.hprof`. This is the default behaviour
+starting from JDK 17 and costs nothing from the user's perspective.
 
 ## Limitations
 
