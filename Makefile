@@ -66,11 +66,21 @@ dist/hprof-redact-windows-amd64.exe:
 	cp $(WINTMP)/hprof-analyzer-x86_64-pc-windows-msvc/hprof-redact.exe $@
 	rm -rf $(WINTMP)
 
+dist/hprof-redact-windows-arm64.exe:
+	mkdir -p dist
+	$(eval WINTMP := $(shell mktemp -d))
+	curl -sL -f $(HPROF_REDACT_BASE)/hprof-analyzer-aarch64-pc-windows-msvc.zip -o $(WINTMP)/win.zip \
+	  && cd $(WINTMP) && unzip -o win.zip hprof-analyzer-aarch64-pc-windows-msvc/hprof-redact.exe \
+	  && cp $(WINTMP)/hprof-analyzer-aarch64-pc-windows-msvc/hprof-redact.exe $@ \
+	  || touch $@
+	rm -rf $(WINTMP)
+
 HPROF_REDACT_BINS = \
 	dist/hprof-redact-linux-amd64 \
 	dist/hprof-redact-linux-arm64 \
 	dist/hprof-redact-darwin-arm64 \
-	dist/hprof-redact-windows-amd64.exe
+	dist/hprof-redact-windows-amd64.exe \
+	dist/hprof-redact-windows-arm64.exe
 
 download-hprof-redact: $(HPROF_REDACT_BINS)
 
@@ -86,6 +96,7 @@ compile-all: $(JSTALL_DEP) $(HPROF_REDACT_BINS)
 	GOOS=linux GOARCH=arm64 go build -o build/cf-cli-java-plugin-linux-arm64 .
 	GOOS=darwin GOARCH=arm64 go build -o build/cf-cli-java-plugin-osx-arm64 .
 	GOOS=windows GOARCH=amd64 go build -o build/cf-cli-java-plugin-win64.exe .
+	GOOS=windows GOARCH=arm64 go build -o build/cf-cli-java-plugin-win-arm64.exe .
 
 clean:
 	rm -r build

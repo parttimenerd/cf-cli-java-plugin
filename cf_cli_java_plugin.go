@@ -49,6 +49,7 @@ const (
 	extJFR             = ".jfr"
 	labelJFR           = "JFR recording"
 	partJFR            = "jfr"
+	extHprof           = ".hprof"
 )
 
 // JavaPlugin is a CF CLI plugin that supports taking heap and thread dumps on demand
@@ -551,7 +552,7 @@ var commands = []Command{
 		Name:          cmdHeapDump,
 		Description:   "Generate a heap dump from a running Java application",
 		GenerateFiles: true,
-		FileExtension: ".hprof",
+		FileExtension: extHprof,
 		/*
 					If there is not enough space on the filesystem to write the dump, jmap will create a file
 			with size 0, output something about not enough space left on the device, and exit with status code 0.
@@ -582,7 +583,9 @@ if [ -z "${JMAP_COMMAND}" ] && [ -z "${JVMMON_COMMAND}" ]; then
   exit 1
 fi
 if [ -n "${JMAP_COMMAND}" ]; then
-OUTPUT=$( ${JMAP_COMMAND} -dump:format=b@JMAP_GZ,file=@FILE_NAME $(pidof java) ) || STATUS_CODE=$?
+GZ_ARG=""
+if ${JMAP_COMMAND} -h 2>&1 | grep -q "gz="; then GZ_ARG=",gz=1"; fi
+OUTPUT=$( ${JMAP_COMMAND} -dump:format=b${GZ_ARG},file=@FILE_NAME $(pidof java) ) || STATUS_CODE=$?
 if [ ! -s @FILE_NAME ]; then echo >&2 ${OUTPUT}; exit 1; fi
 if [ ${STATUS_CODE:-0} -gt 0 ]; then echo >&2 ${OUTPUT}; exit ${STATUS_CODE}; fi
 elif [ -n "${JVMMON_COMMAND}" ]; then
@@ -1101,7 +1104,8 @@ func (c *JavaPlugin) execute(_ plugin.CliConnection, args []string) (string, err
 	fspath := remoteDir
 	fileExt := command.FileExtension
 	if command.Name == cmdHeapDump && options.Compress {
-		fileExt = ".hprof.gz"
+		// Only set .hprof.gz for jvmmon path (explicit compress); jmap always writes .hprof on remote
+		fileExt = extHprof
 	}
 
 	// Initialize fspath and fileName for commands that need them
@@ -1142,13 +1146,11 @@ func (c *JavaPlugin) execute(_ plugin.CliConnection, args []string) (string, err
 	}
 
 	commandText := command.SSHCommand
-	// Expand compress placeholders for heap-dump before the general variable substitution
+	// Expand @COMPRESS_FLAG for jvmmon path in heap-dump (jmap uses shell-level gz probe)
 	if command.Name == cmdHeapDump {
 		if options.Compress {
-			commandText = strings.ReplaceAll(commandText, "@JMAP_GZ", ",gz=1")
 			commandText = strings.ReplaceAll(commandText, "@COMPRESS_FLAG", "1")
 		} else {
-			commandText = strings.ReplaceAll(commandText, "@JMAP_GZ", "")
 			commandText = strings.ReplaceAll(commandText, "@COMPRESS_FLAG", "")
 		}
 	}
@@ -1209,7 +1211,7 @@ func (c *JavaPlugin) execute(_ plugin.CliConnection, args []string) (string, err
 		var finalFile string
 		var err error
 		switch fileExt {
-		case ".hprof":
+		case extHprof:
 			c.logVerbosef("Finding heap dump file")
 			finalFile, err = utils.FindHeapDumpFile(cfSSHArguments, fileName, fspath, applicationName+"-"+command.FileNamePart)
 		case ".hprof.gz":
@@ -1239,9 +1241,34 @@ func (c *JavaPlugin) execute(_ plugin.CliConnection, args []string) (string, err
 			return output, nil
 		}
 
-		localFileFullPath := localDir + "/" + applicationName + "-" + command.FileNamePart + "-" + utils.GenerateUUID() + fileExt
+		// For heap-dump via jmap: probe whether the remote file is gzip-compressed.
+		// jmap writes a .hprof filename but may fill it with gzip content when gz=1 is supported.
+		localFileExt := fileExt
+		remoteIsGz := false
+		if command.Name == cmdHeapDump && fileExt == extHprof {
+			remoteIsGz, _ = utils.ProbeRemoteFileGzip(cfSSHArguments, fileName)
+			c.logVerbosef("Remote file is gzip-compressed: %t", remoteIsGz)
+			switch {
+			case remoteIsGz && options.Compress:
+				// User asked for .hprof.gz locally → keep compressed
+				localFileExt = ".hprof.gz"
+			case !remoteIsGz && options.Compress:
+				fmt.Fprintf(os.Stderr, "Warning: remote jmap does not support gz compression (JDK 17+ required); downloading uncompressed\n")
+			case remoteIsGz:
+				fmt.Println("Note: remote jmap used gz compression; decompressing during transfer...")
+			}
+		}
+
+		localFileFullPath := localDir + "/" + applicationName + "-" + command.FileNamePart + "-" + utils.GenerateUUID() + localFileExt
 		c.logVerbosef("Downloading file to: %s", localFileFullPath)
-		err = utils.CopyOverCat(cfSSHArguments, fileName, localFileFullPath)
+
+		if command.Name == cmdHeapDump && remoteIsGz && localFileExt == extHprof {
+			// Transparent decompression: stream gz from remote, write plain .hprof locally
+			err = utils.CopyOverCatGunzip(cfSSHArguments, fileName, localFileFullPath)
+		} else {
+			err = utils.CopyOverCat(cfSSHArguments, fileName, localFileFullPath)
+		}
+
 		if err == nil {
 			c.logVerbosef("File download completed successfully")
 			fmt.Println(utils.ToSentenceCase(command.FileLabel) + " file saved to: " + localFileFullPath)

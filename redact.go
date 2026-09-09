@@ -30,6 +30,9 @@ var hprofRedactDarwinArm64 []byte
 //go:embed dist/hprof-redact-windows-amd64.exe
 var hprofRedactWindowsAmd64 []byte
 
+//go:embed dist/hprof-redact-windows-arm64.exe
+var hprofRedactWindowsArm64 []byte
+
 // hprofRedactBytes returns the embedded hprof-redact binary for the current platform,
 // or (nil, false) if this platform is not supported.
 func hprofRedactBytes() ([]byte, bool) {
@@ -40,8 +43,10 @@ func hprofRedactBytes() ([]byte, bool) {
 		return hprofRedactLinuxArm64, true
 	case "darwin/arm64":
 		return hprofRedactDarwinArm64, true
-	case "windows/amd64":
+	case osWindows + "/amd64":
 		return hprofRedactWindowsAmd64, true
+	case osWindows + "/arm64":
+		return hprofRedactWindowsArm64, true
 	default:
 		return nil, false
 	}
@@ -53,6 +58,9 @@ func ensureHprofRedact() (string, error) {
 	data, ok := hprofRedactBytes()
 	if !ok {
 		return "", fmt.Errorf("hprof-redact is not available for %s/%s; install manually: https://github.com/parttimenerd/hprof-analyzer/releases", runtime.GOOS, runtime.GOARCH)
+	}
+	if len(data) == 0 {
+		return "", fmt.Errorf("hprof-redact for %s/%s was not available at build time; install manually: https://github.com/parttimenerd/hprof-analyzer/releases", runtime.GOOS, runtime.GOARCH)
 	}
 
 	cacheDir, err := os.UserCacheDir()

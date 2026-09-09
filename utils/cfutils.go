@@ -2,11 +2,13 @@
 package utils
 
 import (
+	"compress/gzip"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -244,6 +246,63 @@ func CopyOverCat(args []string, src string, dest string) error {
 	}
 
 	return nil
+}
+
+// CopyOverCatGunzip streams a remote gzip-compressed file via cf ssh and decompresses
+// it on the fly, saving the result at dest.
+func CopyOverCatGunzip(args []string, src string, dest string) error {
+	if dir := filepath.Dir(dest); dir != "" && dir != "." {
+		if err := os.MkdirAll(dir, 0o755); err != nil { //nolint:gosec // 0755 is correct for a local download directory
+			return fmt.Errorf("cannot create local directory %s: %w", dir, err)
+		}
+	}
+	f, err := os.OpenFile(dest, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600) //nolint:gosec // dest is a plugin-constructed output path
+	if err != nil {
+		return errors.New("Error creating local file at " + dest + ". Please check that you are allowed to create files at the given local path.")
+	}
+	defer func() {
+		if closeErr := f.Close(); closeErr != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to close file %s: %v\n", dest, closeErr)
+		}
+	}()
+
+	pr, pw := io.Pipe()
+	catArgs := append(args, "cat \""+src+"\"") //nolint:gocritic // intentional new slice
+	cat := exec.Command("cf", catArgs...)
+	cat.Stdout = pw
+
+	if err := cat.Start(); err != nil {
+		_ = pr.Close()
+		_ = pw.Close()
+		return errors.New("error starting cf ssh: " + err.Error())
+	}
+
+	go func() {
+		_ = pw.CloseWithError(cat.Wait())
+	}()
+
+	gz, err := gzip.NewReader(pr)
+	if err != nil {
+		return fmt.Errorf("gzip header error: %w", err)
+	}
+	defer func() { _ = gz.Close() }()
+
+	if _, err := io.Copy(f, gz); err != nil { //nolint:gosec // G110: source is a trusted CF container owned by the user
+		return fmt.Errorf("decompression failed: %w", err)
+	}
+	return nil
+}
+
+// ProbeRemoteFileGzip checks if the first 2 bytes of a remote file are the gzip magic bytes (1f 8b).
+func ProbeRemoteFileGzip(args []string, path string) (bool, error) {
+	cmd := fmt.Sprintf("xxd -l 2 \"%s\" 2>/dev/null || od -An -N2 -tx1 \"%s\" 2>/dev/null", path, path)
+	probeArgs := append(args, cmd) //nolint:gocritic // intentional new slice
+	out, err := exec.Command("cf", probeArgs...).Output()
+	if err != nil {
+		return false, err
+	}
+	outStr := string(out)
+	return strings.Contains(outStr, "1f") && strings.Contains(outStr, "8b"), nil
 }
 
 // DeleteRemoteFile removes a file from the remote Cloud Foundry application container.
