@@ -113,7 +113,7 @@ how_to:
     cf java heap-dump $APP_NAME --redact            # lean: zeros primitive arrays
     cf java heap-dump $APP_NAME --redact-complete   # complete: zeros all primitive values
     ```
-    To reduce file size (requires JDK 17+ on the container):
+    To keep the local file compressed as .hprof.gz (transfer is already gzip-compressed on JDK 17+):
     ```bash
     cf java heap-dump $APP_NAME --compress          # saves as .hprof.gz
     ```

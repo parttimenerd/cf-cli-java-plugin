@@ -16,7 +16,7 @@ Currently, it allows you to:
 - Run [jstall](https://github.com/parttimenerd/jstall) for one-shot JVM inspection (deadlock detection, hot threads,
   dependency graphs, and more): bundled directly in the plugin, requires Java 17+ locally
 - Redact heap dumps before saving to remove sensitive data (`--redact`, `--redact-complete`)
-- Reduce transfer size by compressing heap dumps over SSH (`--compress`)
+- Automatically compress heap dump transfers over SSH on JDK 17+ containers; use `--compress` to keep the local file as `.hprof.gz`
 - Open heap dumps directly in the [hprof-analyzer](https://parttimenerd.github.io/hprof-analyzer) web app after downloading (`--open`)
 
 ## Installation
@@ -198,17 +198,18 @@ is not in `cf java`, but in whatever makes `cf ssh` fail.
 Getting a heap dump:
 
 ```sh
-# Basic — plain .hprof saved locally
+# Basic — plain .hprof saved locally.
+# On JDK 17+ containers, transfer is always gzip-compressed automatically (faster on slow connections).
 cf java heap-dump $APP_NAME
 
 # Redact sensitive values (passwords, tokens, personal data) before saving
 cf java heap-dump $APP_NAME --redact            # lean: zeros primitive arrays
 cf java heap-dump $APP_NAME --redact-complete   # complete: zeros all primitive values
 
-# Compress the output (JDK 17+ on container required; falls back to uncompressed otherwise)
-cf java heap-dump $APP_NAME --compress          # saves as .hprof.gz
+# Keep the local file compressed as .hprof.gz (transfer is already compressed on JDK 17+)
+cf java heap-dump $APP_NAME --compress
 
-# Redact and compress
+# Redact and keep compressed
 cf java heap-dump $APP_NAME --redact --compress
 
 # Open in hprof-analyzer web app after downloading (spins up a local server, opens browser)

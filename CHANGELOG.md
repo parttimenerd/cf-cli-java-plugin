@@ -16,10 +16,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
   Supported on Linux (amd64, arm64), macOS (Apple Silicon), and Windows (amd64, arm64).
 - `heap-dump --redact-complete`: zeros all primitive arrays and individual primitive fields (complete redaction mode,
   maximum privacy). Mutually exclusive with `--redact`.
-- `heap-dump --compress`: saves the dump as `.hprof.gz` by transferring it gzip-compressed over SSH (requires JDK 17+
-  on the container). Prints a warning and falls back to uncompressed on older JDKs.
-- Transparent compressed transfer: on JDK 17+ containers, the plugin automatically uses `jmap gz=1` to reduce
-  transfer size even without `--compress`, decompressing on the fly so the local file is always a plain `.hprof`.
+- `heap-dump --compress`: saves the local file as `.hprof.gz` instead of decompressing it after transfer
+  (requires JDK 17+ on the container). Useful when you want to store or share the compressed dump directly.
+- Transparent compressed transfer: on JDK 17+ containers, the plugin always uses `jmap gz=1` to compress
+  the dump during SSH transfer (faster on slow connections), then decompresses on the fly so the local file
+  is a plain `.hprof`. Use `--compress` to keep the file compressed locally.
 - `heap-dump --open`: after downloading (and optionally redacting/compressing) the dump, spins up a temporary local
   HTTP server and opens the [hprof-analyzer](https://parttimenerd.github.io/hprof-analyzer) web app in the default
   browser with the dump pre-loaded. The server serves the file exactly once via a random token URL and shuts down
