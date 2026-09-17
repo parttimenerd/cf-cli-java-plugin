@@ -1,0 +1,106 @@
+package main
+
+import (
+	"fmt"
+	"io"
+	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+func TestServeFileOnce(t *testing.T) {
+	tmp := t.TempDir()
+	p := filepath.Join(tmp, "test.hprof")
+	if err := os.WriteFile(p, []byte("HEAP_CONTENT"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	port, done, err := serveFileOnce(p)
+	if err != nil {
+		t.Fatalf("serveFileOnce: %v", err)
+	}
+	if port <= 0 {
+		t.Fatalf("expected positive port, got %d", port)
+	}
+
+	url := fmt.Sprintf("http://localhost:%d/test.hprof", port)
+	resp, err := http.Get(url) //nolint:noctx,gosec
+	if err != nil {
+		t.Fatalf("GET %s: %v", url, err)
+	}
+	defer func() {
+		if closeErr := resp.Body.Close(); closeErr != nil {
+			t.Errorf("body close: %v", closeErr)
+		}
+	}()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	if ct := resp.Header.Get("Content-Type"); ct != "application/octet-stream" {
+		t.Errorf("Content-Type: want application/octet-stream, got %s", ct)
+	}
+	if acao := resp.Header.Get("Access-Control-Allow-Origin"); acao != "*" {
+		t.Errorf("Access-Control-Allow-Origin: want *, got %s", acao)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	if string(body) != "HEAP_CONTENT" {
+		t.Errorf("body: want HEAP_CONTENT, got %s", body)
+	}
+
+	select {
+	case <-done:
+	default:
+		t.Error("done channel not closed after successful GET")
+	}
+}
+
+func TestServeFileOnce_MissingFile(t *testing.T) {
+	_, _, err := serveFileOnce("/nonexistent/path/dump.hprof")
+	if err == nil {
+		t.Fatal("expected error for missing file, got nil")
+	}
+}
+
+func TestBuildOpenURL(t *testing.T) {
+	cases := []struct {
+		base     string
+		port     int
+		filename string
+		want     string
+	}{
+		{
+			"https://parttimenerd.github.io/hprof-analyzer",
+			54321,
+			"myapp-heapdump-abc.hprof",
+			"https://parttimenerd.github.io/hprof-analyzer/?file=http://localhost:54321/myapp-heapdump-abc.hprof",
+		},
+		{
+			"https://parttimenerd.github.io/hprof-analyzer/",
+			9000,
+			"dump.hprof.gz",
+			"https://parttimenerd.github.io/hprof-analyzer/?file=http://localhost:9000/dump.hprof.gz",
+		},
+		{
+			"https://parttimenerd.github.io/hprof-analyzer",
+			0,
+			"dump.hprof",
+			"https://parttimenerd.github.io/hprof-analyzer/?file=http://localhost:PORT/dump.hprof",
+		},
+	}
+	for _, tc := range cases {
+		got := buildOpenURL(tc.base, tc.port, tc.filename)
+		if got != tc.want {
+			t.Errorf("buildOpenURL(%q, %d, %q)\n  want %q\n   got %q", tc.base, tc.port, tc.filename, tc.want, got)
+		}
+	}
+}
+
+func TestBuildOpenURL_TrailingSlash(t *testing.T) {
+	url := buildOpenURL("https://example.com/analyzer/", 1234, "dump.hprof")
+	if strings.Contains(url, "//?") {
+		t.Errorf("double slash before ?: %s", url)
+	}
+}
