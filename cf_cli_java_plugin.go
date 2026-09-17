@@ -40,6 +40,9 @@ const (
 	flagRedact         = "redact"
 	flagRedactComplete = "redact-complete"
 	flagCompress       = "compress"
+	flagOpen           = "open"
+	flagOpenURL        = "open-url"
+	defaultOpenURL     = "https://parttimenerd.github.io/hprof-analyzer"
 	osWindows          = "windows"
 	cmdHeapDump        = "heap-dump"
 	typeBool           = "bool"
@@ -216,6 +219,8 @@ type Options struct {
 	Redact           bool
 	RedactComplete   bool
 	Compress         bool
+	Open             bool
+	OpenURL          string
 }
 
 // FlagDefinition holds metadata for a command-line flag
@@ -309,6 +314,16 @@ var flagDefinitions = []FlagDefinition{
 		Usage: "compress heap dump on container using jmap gz=1 (JDK 17+) to reduce transfer size; output is .hprof.gz",
 		Type:  typeBool,
 	},
+	{
+		Name:  flagOpen,
+		Usage: "open the heap dump in the hprof-analyzer web app after downloading",
+		Type:  typeBool,
+	},
+	{
+		Name:  flagOpenURL,
+		Usage: "base URL of the hprof-analyzer instance to open (implies --open)",
+		Type:  typeString,
+	},
 }
 
 func (c *JavaPlugin) createOptionsParser() flags.FlagContext {
@@ -380,11 +395,24 @@ func (c *JavaPlugin) parseOptions(args []string) (*Options, []string, error) {
 		Redact:           commandFlags.IsSet(flagRedact),
 		RedactComplete:   commandFlags.IsSet(flagRedactComplete),
 		Compress:         commandFlags.IsSet(flagCompress),
+		Open:             commandFlags.IsSet(flagOpen) || commandFlags.IsSet(flagOpenURL),
+		OpenURL: func() string {
+			if u := commandFlags.String(flagOpenURL); u != "" {
+				return u
+			}
+			return defaultOpenURL
+		}(),
 	}
 
 	if options.Redact && options.RedactComplete {
 		return nil, nil, &InvalidUsageError{
 			message: "Error: flags '--redact' and '--redact-complete' are mutually exclusive",
+		}
+	}
+
+	if options.Open && options.NoDownload {
+		return nil, nil, &InvalidUsageError{
+			message: "Error: flag '--open' requires a local file and cannot be used with '--no-download'",
 		}
 	}
 
