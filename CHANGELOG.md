@@ -13,7 +13,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
   `cf java jstall APP_NAME`. Requires Java 17+ locally. Supports all jstall subcommands via `--args`.
 - `heap-dump --redact`: zeros primitive arrays (`byte[]`, `char[]`, etc.) in the downloaded dump before saving
   (lean redaction mode), using the bundled [hprof-redact](https://github.com/parttimenerd/hprof-analyzer) binary.
-  Supported on Linux, macOS (Apple Silicon), and Windows.
+  Supported on Linux (amd64, arm64), macOS (Apple Silicon), and Windows (amd64, arm64).
 - `heap-dump --redact-complete`: zeros all primitive arrays and individual primitive fields (complete redaction mode,
   maximum privacy). Mutually exclusive with `--redact`.
 - `heap-dump --compress`: saves the dump as `.hprof.gz` by transferring it gzip-compressed over SSH (requires JDK 17+
