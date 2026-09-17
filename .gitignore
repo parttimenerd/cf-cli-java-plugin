@@ -54,3 +54,6 @@ dist
 
 # go
 pkg
+
+# Internal planning docs (superpowers skill artifacts)
+docs/superpowers/
