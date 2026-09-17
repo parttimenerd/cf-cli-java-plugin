@@ -39,13 +39,7 @@ jobs:
           curl -fsSL -o dist/jstall-minimal.jar https://github.com/parttimenerd/jstall/releases/latest/download/jstall-minimal.jar
 
       - name: Download hprof-redact binaries for go:embed
-        run: |
-          HPROF_BASE="https://github.com/parttimenerd/hprof-analyzer/releases/download/nightly"
-          curl -fsSL -o dist/hprof-redact-linux-amd64    "$HPROF_BASE/hprof-redact-linux-amd64"
-          curl -fsSL -o dist/hprof-redact-linux-arm64    "$HPROF_BASE/hprof-redact-linux-arm64"
-          curl -fsSL -o dist/hprof-redact-darwin-arm64   "$HPROF_BASE/hprof-redact-darwin-arm64"
-          curl -fsSL -o dist/hprof-redact-windows-amd64.exe "$HPROF_BASE/hprof-redact-windows-amd64.exe"
-          curl -fsSL -o dist/hprof-redact-windows-arm64.exe "$HPROF_BASE/hprof-redact-windows-arm64.exe"
+        run: python3 .github/workflows/build.py --deps-only
 
       - name: Install Go dependencies
         run: go mod tidy -e || true
