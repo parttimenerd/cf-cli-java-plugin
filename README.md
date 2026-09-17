@@ -153,6 +153,11 @@ cf java heap-dump $APP_NAME --open --redact --compress
 cf java heap-dump $APP_NAME --open-url http://localhost:8080
 ```
 
+> **macOS note:** On macOS with the Application Firewall enabled, a dialog will appear asking
+> *"Do you want the application 'cf-cli-java-plugin' to accept incoming network connections?"*
+> Click **Allow** — the plugin binds a temporary local server on `127.0.0.1` to serve the file
+> to the browser. The server shuts down automatically after the browser fetches the file once.
+
 Getting a thread dump:
 
 ```sh

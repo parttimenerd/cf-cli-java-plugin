@@ -81,6 +81,18 @@ Would open: https://parttimenerd.github.io/hprof-analyzer/?file=http://localhost
 | `--open` + `--no-download` | Error at parse time |
 | `--open` on non-heap-dump command | Error at parse time |
 
+## Platform notes
+
+**macOS Application Firewall:** When the macOS firewall is enabled (System Settings → Network → Firewall), the OS
+shows a dialog on first use: *"Do you want the application 'cf-cli-java-plugin' to accept incoming network
+connections?"* The user must click **Allow**. The plugin binds only to `127.0.0.1` (loopback), so allowing this
+does not expose any port to the network. The server exits after the browser fetches the file once.
+
+**Browser mixed-content:** Chrome and Firefox allow HTTPS pages to fetch from `http://localhost` without any
+security warning — `localhost` is treated as a secure context by the browser specifications (
+[W3C Secure Contexts](https://www.w3.org/TR/secure-contexts/#is-origin-trustworthy)). No browser permission
+prompt is shown for the fetch itself.
+
 ## Dependencies
 
 No new external dependencies. Uses `net/http`, `os/exec`, `runtime` from stdlib.
