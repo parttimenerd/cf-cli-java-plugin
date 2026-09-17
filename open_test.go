@@ -115,6 +115,52 @@ func TestServeFileOnce_MissingFile(t *testing.T) {
 	}
 }
 
+func TestServeFileOnce_OptionsPreflight(t *testing.T) {
+	tmp := t.TempDir()
+	p := filepath.Join(tmp, "test.hprof")
+	if err := os.WriteFile(p, []byte("DATA"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	port, urlFile, done, err := serveFileOnce(p)
+	if err != nil {
+		t.Fatalf("serveFileOnce: %v", err)
+	}
+
+	url := fmt.Sprintf("http://localhost:%d/%s", port, urlFile)
+
+	// OPTIONS preflight must not trigger shutdown
+	req, _ := http.NewRequest(http.MethodOptions, url, nil) //nolint:noctx
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("OPTIONS %s: %v", url, err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Errorf("OPTIONS: want 204, got %d", resp.StatusCode)
+	}
+	select {
+	case <-done:
+		t.Error("done channel closed after OPTIONS — server shut down prematurely")
+	default:
+	}
+
+	// Subsequent GET must still succeed and close done
+	resp2, err := http.Get(url) //nolint:noctx,gosec
+	if err != nil {
+		t.Fatalf("GET after OPTIONS: %v", err)
+	}
+	defer func() { _ = resp2.Body.Close() }()
+	if resp2.StatusCode != http.StatusOK {
+		t.Errorf("GET after OPTIONS: want 200, got %d", resp2.StatusCode)
+	}
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Error("done channel not closed after GET")
+	}
+}
+
 func TestBuildOpenURL(t *testing.T) {
 	cases := []struct {
 		base     string

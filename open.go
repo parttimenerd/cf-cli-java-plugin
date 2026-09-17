@@ -58,13 +58,23 @@ func serveFileOnce(path string) (port int, urlFile string, done <-chan struct{},
 
 	// Register only the exact random path — any other request gets 404.
 	mux.HandleFunc("/"+urlFile, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		// Answer CORS preflight without serving the file or triggering shutdown.
+		if r.Method == http.MethodOptions {
+			w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
 		f, ferr := os.Open(path) //nolint:gosec // path comes from plugin internals, not user input
 		if ferr != nil {
 			http.Error(w, "file unavailable", http.StatusInternalServerError)
 			return
 		}
 		defer func() { _ = f.Close() }()
-		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Content-Type", "application/octet-stream")
 		w.WriteHeader(http.StatusOK)
 		_, _ = io.Copy(w, f)
