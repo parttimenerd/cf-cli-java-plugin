@@ -367,7 +367,7 @@ use `--redact` or `--redact-complete` to zero out sensitive values.
 
 | Flag                | What gets zeroed                                                                             |
 | ------------------- | -------------------------------------------------------------------------------------------- |
-| `--redact`          | Primitive arrays (`byte[]`, `char[]`, `int[]`, …) — covers most strings and serialized data |
+| `--redact`          | Primitive arrays (`byte[]`, `char[]`, `int[]`, …) — covers most strings and serialized data  |
 | `--redact-complete` | All primitive arrays **and** individual primitive fields — maximum privacy                   |
 
 Both modes preserve the full object graph (class names, references, instance counts), so the dump remains useful for
