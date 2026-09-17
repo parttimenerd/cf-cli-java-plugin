@@ -9,6 +9,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -42,9 +43,18 @@ func serveFileOnce(path string) (int, <-chan struct{}, error) {
 	}
 
 	mux.HandleFunc("/"+filepath.Base(path), func(w http.ResponseWriter, r *http.Request) {
+		// Open the specific file directly rather than using http.ServeFile, which
+		// follows path cleaning and redirects and could expose other files.
+		f, ferr := os.Open(path) //nolint:gosec // path comes from plugin internals, not user input
+		if ferr != nil {
+			http.Error(w, "file unavailable", http.StatusInternalServerError)
+			return
+		}
+		defer func() { _ = f.Close() }()
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Content-Type", "application/octet-stream")
-		http.ServeFile(w, r, path)
+		w.WriteHeader(http.StatusOK)
+		_, _ = io.Copy(w, f)
 		// Intentionally not using r.Context(): the request context is canceled as
 		// soon as the handler returns, but Shutdown must outlive the request.
 		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second) //nolint:contextcheck
