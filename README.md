@@ -365,10 +365,10 @@ Heap dumps contain the full in-memory state of a JVM, including strings, byte ar
 hold passwords, tokens, session data, or personal information. Before sharing a dump outside a trusted environment,
 use `--redact` or `--redact-complete` to zero out sensitive values.
 
-| Flag | What gets zeroed |
-|------|------------------|
-| `--redact` | Primitive arrays (`byte[]`, `char[]`, `int[]`, …) — covers most strings and serialized data |
-| `--redact-complete` | All primitive arrays **and** individual primitive fields — maximum privacy |
+| Flag                | What gets zeroed                                                                             |
+| ------------------- | -------------------------------------------------------------------------------------------- |
+| `--redact`          | Primitive arrays (`byte[]`, `char[]`, `int[]`, …) — covers most strings and serialized data |
+| `--redact-complete` | All primitive arrays **and** individual primitive fields — maximum privacy                   |
 
 Both modes preserve the full object graph (class names, references, instance counts), so the dump remains useful for
 memory analysis. The two flags are mutually exclusive.
