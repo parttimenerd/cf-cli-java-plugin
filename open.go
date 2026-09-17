@@ -74,8 +74,6 @@ func buildOpenURL(base string, port int, filename string) string {
 
 // openBrowser opens url in the system default browser.
 // If launch fails, prints the URL to stdout so the user can open it manually.
-//
-//nolint:unused
 func openBrowser(url string) {
 	var cmd *exec.Cmd
 	switch runtime.GOOS {

@@ -1307,6 +1307,7 @@ func (c *JavaPlugin) execute(_ plugin.CliConnection, args []string) (string, err
 			c.logVerbosef("File download completed successfully")
 			fmt.Println(utils.ToSentenceCase(command.FileLabel) + " file saved to: " + localFileFullPath)
 
+			finalLocalPath := localFileFullPath
 			if command.Name == cmdHeapDump && (options.Redact || options.RedactComplete) {
 				mode := "lean"
 				if options.RedactComplete {
@@ -1322,6 +1323,22 @@ func (c *JavaPlugin) execute(_ plugin.CliConnection, args []string) (string, err
 					return "", fmt.Errorf("redaction failed (unredacted file at %s): %w", localFileFullPath, rerr)
 				}
 				fmt.Println("Redacted heap dump saved to: " + finalPath)
+				finalLocalPath = finalPath
+			}
+
+			if command.Name == cmdHeapDump && options.Open {
+				if options.DryRun {
+					fmt.Printf("Would open: %s\n", buildOpenURL(options.OpenURL, 0, filepath.Base(finalLocalPath)))
+				} else {
+					port, done, serveErr := serveFileOnce(finalLocalPath)
+					if serveErr != nil {
+						return "", fmt.Errorf("could not start local file server: %w", serveErr)
+					}
+					openURL := buildOpenURL(options.OpenURL, port, filepath.Base(finalLocalPath))
+					fmt.Printf("Opening heap dump in browser: %s\n", openURL)
+					openBrowser(openURL)
+					<-done
+				}
 			}
 		} else {
 			c.logVerbosef("File download failed: %v", err)
