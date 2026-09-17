@@ -7,6 +7,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"net/http"
@@ -44,11 +45,14 @@ func serveFileOnce(path string) (int, <-chan struct{}, error) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Content-Type", "application/octet-stream")
 		http.ServeFile(w, r, path)
-		ctx := r.Context()
-		go func() {
+		// Intentionally not using r.Context(): the request context is canceled as
+		// soon as the handler returns, but Shutdown must outlive the request.
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second) //nolint:contextcheck
+		go func(ctx context.Context, cancel context.CancelFunc) {                               //nolint:contextcheck
+			defer cancel()
 			close(done)
 			_ = srv.Shutdown(ctx)
-		}()
+		}(shutdownCtx, shutdownCancel)
 	})
 
 	go func() { _ = srv.Serve(ln) }()
@@ -78,7 +82,7 @@ func openBrowser(url string) {
 	case "darwin":
 		cmd = exec.Command("open", url)
 	case osWindows:
-		cmd = exec.Command("cmd", "/c", "start", url)
+		cmd = exec.Command("cmd", "/c", "start", "", url)
 	default:
 		cmd = exec.Command("xdg-open", url)
 	}

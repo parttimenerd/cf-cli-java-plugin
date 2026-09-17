@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestServeFileOnce(t *testing.T) {
@@ -52,7 +53,7 @@ func TestServeFileOnce(t *testing.T) {
 
 	select {
 	case <-done:
-	default:
+	case <-time.After(2 * time.Second):
 		t.Error("done channel not closed after successful GET")
 	}
 }
