@@ -1218,6 +1218,13 @@ func (c *JavaPlugin) execute(_ plugin.CliConnection, args []string) (string, err
 		// to prevent the shell processing it from running it in local
 		escapedCommand := strings.ReplaceAll(remoteCommand, "'", "'\\''")
 		cfSSHArguments = append(cfSSHArguments, "'"+escapedCommand+"'")
+		if command.Name == cmdHeapDump && options.Open {
+			ext := extHprof
+			if options.Compress {
+				ext = extHprofGz
+			}
+			fmt.Printf("Would open: %s\n", buildOpenURL(options.OpenURL, 0, "TOKEN"+ext))
+		}
 		return "cf " + strings.Join(cfSSHArguments, " "), nil
 	}
 
@@ -1328,18 +1335,14 @@ func (c *JavaPlugin) execute(_ plugin.CliConnection, args []string) (string, err
 			}
 
 			if command.Name == cmdHeapDump && options.Open {
-				if options.DryRun {
-					fmt.Printf("Would open: %s\n", buildOpenURL(options.OpenURL, 0, "TOKEN.hprof"))
-				} else {
-					port, urlFile, done, serveErr := serveFileOnce(finalLocalPath)
-					if serveErr != nil {
-						return "", fmt.Errorf("could not start local file server: %w", serveErr)
-					}
-					openURL := buildOpenURL(options.OpenURL, port, urlFile)
-					fmt.Printf("Opening heap dump in browser: %s\n", openURL)
-					openBrowser(openURL)
-					<-done
+				port, urlFile, done, serveErr := serveFileOnce(finalLocalPath)
+				if serveErr != nil {
+					return "", fmt.Errorf("could not start local file server: %w", serveErr)
 				}
+				openURL := buildOpenURL(options.OpenURL, port, urlFile)
+				fmt.Printf("Opening heap dump in browser: %s\n", openURL)
+				openBrowser(openURL)
+				<-done
 			}
 		} else {
 			c.logVerbosef("File download failed: %v", err)
