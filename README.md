@@ -17,6 +17,7 @@ Currently, it allows you to:
   dependency graphs, and more): bundled directly in the plugin, requires Java 17+ locally
 - Redact heap dumps before saving to remove sensitive data (`--redact`, `--redact-complete`)
 - Reduce transfer size by compressing heap dumps over SSH (`--compress`)
+- Open heap dumps directly in the [hprof-analyzer](https://parttimenerd.github.io/hprof-analyzer) web app after downloading (`--open`)
 
 ## Installation
 
@@ -141,6 +142,15 @@ cf java heap-dump $APP_NAME --compress          # saves as .hprof.gz
 
 # Redact and compress
 cf java heap-dump $APP_NAME --redact --compress
+
+# Open in hprof-analyzer web app after downloading (spins up a local server, opens browser)
+cf java heap-dump $APP_NAME --open
+
+# Open with redaction and compression applied first
+cf java heap-dump $APP_NAME --open --redact --compress
+
+# Open using a locally running hprof-analyzer instance
+cf java heap-dump $APP_NAME --open-url http://localhost:8080
 ```
 
 Getting a thread dump:

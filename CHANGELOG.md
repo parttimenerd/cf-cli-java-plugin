@@ -20,6 +20,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
   on the container). Prints a warning and falls back to uncompressed on older JDKs.
 - Transparent compressed transfer: on JDK 17+ containers, the plugin automatically uses `jmap gz=1` to reduce
   transfer size even without `--compress`, decompressing on the fly so the local file is always a plain `.hprof`.
+- `heap-dump --open`: after downloading (and optionally redacting/compressing) the dump, spins up a temporary local
+  HTTP server and opens the [hprof-analyzer](https://parttimenerd.github.io/hprof-analyzer) web app in the default
+  browser with the dump pre-loaded. The server serves the file exactly once via a random token URL and shuts down
+  automatically after the browser fetches it.
+- `heap-dump --open-url <URL>`: override the hprof-analyzer base URL (e.g. a locally running instance). Implies
+  `--open`.
 
 ### Changed
 
