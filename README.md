@@ -16,8 +16,10 @@ Currently, it allows you to:
 - Run [jstall](https://github.com/parttimenerd/jstall) for one-shot JVM inspection (deadlock detection, hot threads,
   dependency graphs, and more): bundled directly in the plugin, requires Java 17+ locally
 - Redact heap dumps before saving to remove sensitive data (`--redact`, `--redact-complete`)
-- Automatically compress heap dump transfers over SSH on JDK 17+ containers; use `--compress` to keep the local file as `.hprof.gz`
-- Open heap dumps directly in the [hprof-analyzer](https://parttimenerd.github.io/hprof-analyzer) web app after downloading (`--open`)
+- Automatically compress heap dump transfers over SSH on JDK 17+ containers;
+  use `--compress` to keep the local file as `.hprof.gz`
+- Open heap dumps directly in the [hprof-analyzer](https://parttimenerd.github.io/hprof-analyzer) web app
+  after downloading (`--open`)
 
 ## Installation
 
@@ -364,7 +366,7 @@ hold passwords, tokens, session data, or personal information. Before sharing a 
 use `--redact` or `--redact-complete` to zero out sensitive values.
 
 | Flag | What gets zeroed |
-|------|-----------------|
+|------|------------------|
 | `--redact` | Primitive arrays (`byte[]`, `char[]`, `int[]`, …) — covers most strings and serialized data |
 | `--redact-complete` | All primitive arrays **and** individual primitive fields — maximum privacy |
 
