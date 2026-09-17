@@ -18,7 +18,7 @@ func TestServeFileOnce(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	port, done, err := serveFileOnce(p)
+	port, urlFile, done, err := serveFileOnce(p)
 	if err != nil {
 		t.Fatalf("serveFileOnce: %v", err)
 	}
@@ -26,7 +26,15 @@ func TestServeFileOnce(t *testing.T) {
 		t.Fatalf("expected positive port, got %d", port)
 	}
 
-	url := fmt.Sprintf("http://localhost:%d/test.hprof", port)
+	// urlFile must have .hprof extension and contain only the token (no path separators)
+	if !strings.HasSuffix(urlFile, ".hprof") {
+		t.Errorf("urlFile %q does not end with .hprof", urlFile)
+	}
+	if strings.ContainsAny(urlFile, "/\\") {
+		t.Errorf("urlFile %q contains path separators", urlFile)
+	}
+
+	url := fmt.Sprintf("http://localhost:%d/%s", port, urlFile)
 	resp, err := http.Get(url) //nolint:noctx,gosec
 	if err != nil {
 		t.Fatalf("GET %s: %v", url, err)
@@ -58,8 +66,50 @@ func TestServeFileOnce(t *testing.T) {
 	}
 }
 
+func TestServeFileOnce_WrongPath404(t *testing.T) {
+	tmp := t.TempDir()
+	p := filepath.Join(tmp, "test.hprof")
+	if err := os.WriteFile(p, []byte("SECRET"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	port, _, _, err := serveFileOnce(p)
+	if err != nil {
+		t.Fatalf("serveFileOnce: %v", err)
+	}
+
+	// Any path other than the exact random token must return 404
+	for _, badPath := range []string{"/test.hprof", "/", "/other.hprof", "/../../etc/passwd"} {
+		url := fmt.Sprintf("http://localhost:%d%s", port, badPath)
+		resp, gerr := http.Get(url) //nolint:noctx,gosec
+		if gerr != nil {
+			continue // server may have shut down already, that's fine
+		}
+		_ = resp.Body.Close()
+		if resp.StatusCode == http.StatusOK {
+			t.Errorf("GET %s: expected non-200, got 200", url)
+		}
+	}
+}
+
+func TestServeFileOnce_GzExtension(t *testing.T) {
+	tmp := t.TempDir()
+	p := filepath.Join(tmp, "test.hprof.gz")
+	if err := os.WriteFile(p, []byte("GZ"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	_, urlFile, _, err := serveFileOnce(p)
+	if err != nil {
+		t.Fatalf("serveFileOnce: %v", err)
+	}
+	if !strings.HasSuffix(urlFile, ".hprof.gz") {
+		t.Errorf("urlFile %q does not end with .hprof.gz", urlFile)
+	}
+}
+
 func TestServeFileOnce_MissingFile(t *testing.T) {
-	_, _, err := serveFileOnce("/nonexistent/path/dump.hprof")
+	_, _, _, err := serveFileOnce("/nonexistent/path/dump.hprof")
 	if err == nil {
 		t.Fatal("expected error for missing file, got nil")
 	}

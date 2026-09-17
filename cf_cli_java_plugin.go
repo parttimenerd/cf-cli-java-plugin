@@ -53,6 +53,7 @@ const (
 	labelJFR           = "JFR recording"
 	partJFR            = "jfr"
 	extHprof           = ".hprof"
+	extHprofGz         = ".hprof.gz"
 )
 
 // JavaPlugin is a CF CLI plugin that supports taking heap and thread dumps on demand
@@ -1248,7 +1249,7 @@ func (c *JavaPlugin) execute(_ plugin.CliConnection, args []string) (string, err
 		case extHprof:
 			c.logVerbosef("Finding heap dump file")
 			finalFile, err = utils.FindHeapDumpFile(cfSSHArguments, fileName, fspath, applicationName+"-"+command.FileNamePart)
-		case ".hprof.gz":
+		case extHprofGz:
 			c.logVerbosef("Finding compressed heap dump file")
 			finalFile, err = utils.FindHeapDumpGzFile(cfSSHArguments, fileName, fspath, applicationName+"-"+command.FileNamePart)
 		case ".jfr":
@@ -1285,7 +1286,7 @@ func (c *JavaPlugin) execute(_ plugin.CliConnection, args []string) (string, err
 			switch {
 			case remoteIsGz && options.Compress:
 				// User asked for .hprof.gz locally → keep compressed
-				localFileExt = ".hprof.gz"
+				localFileExt = extHprofGz
 			case !remoteIsGz && options.Compress:
 				fmt.Fprintf(os.Stderr, "Warning: remote jmap does not support gz compression (JDK 17+ required); downloading uncompressed\n")
 			case remoteIsGz:
@@ -1317,7 +1318,7 @@ func (c *JavaPlugin) execute(_ plugin.CliConnection, args []string) (string, err
 				if rerr != nil {
 					return "", fmt.Errorf("hprof-redact unavailable: %w", rerr)
 				}
-				localIsGz := strings.HasSuffix(localFileFullPath, ".hprof.gz")
+				localIsGz := strings.HasSuffix(localFileFullPath, extHprofGz)
 				finalPath, rerr := pipeHeapDumpThroughRedact(redactBin, localFileFullPath, mode, options.Compress || localIsGz)
 				if rerr != nil {
 					return "", fmt.Errorf("redaction failed (unredacted file at %s): %w", localFileFullPath, rerr)
@@ -1328,13 +1329,13 @@ func (c *JavaPlugin) execute(_ plugin.CliConnection, args []string) (string, err
 
 			if command.Name == cmdHeapDump && options.Open {
 				if options.DryRun {
-					fmt.Printf("Would open: %s\n", buildOpenURL(options.OpenURL, 0, filepath.Base(finalLocalPath)))
+					fmt.Printf("Would open: %s\n", buildOpenURL(options.OpenURL, 0, "TOKEN.hprof"))
 				} else {
-					port, done, serveErr := serveFileOnce(finalLocalPath)
+					port, urlFile, done, serveErr := serveFileOnce(finalLocalPath)
 					if serveErr != nil {
 						return "", fmt.Errorf("could not start local file server: %w", serveErr)
 					}
-					openURL := buildOpenURL(options.OpenURL, port, filepath.Base(finalLocalPath))
+					openURL := buildOpenURL(options.OpenURL, port, urlFile)
 					fmt.Printf("Opening heap dump in browser: %s\n", openURL)
 					openBrowser(openURL)
 					<-done
