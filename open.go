@@ -18,6 +18,7 @@ import (
 	"os/exec"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -50,6 +51,7 @@ func serveFileOnce(path string) (port int, urlFile string, done <-chan struct{},
 	port = ln.Addr().(*net.TCPAddr).Port
 
 	doneCh := make(chan struct{})
+	var shutdownOnce sync.Once
 	mux := http.NewServeMux()
 	srv := &http.Server{
 		Handler:           mux,
@@ -80,11 +82,14 @@ func serveFileOnce(path string) (port int, urlFile string, done <-chan struct{},
 		_, _ = io.Copy(w, f)
 		// Use a fresh context: r.Context() is canceled when the handler returns,
 		// but Shutdown must outlive the request.
+		// sync.Once ensures concurrent GETs can't double-close doneCh (panic).
 		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second) //nolint:contextcheck
 		go func(ctx context.Context, cancel context.CancelFunc) {                               //nolint:contextcheck
 			defer cancel()
-			close(doneCh)
-			_ = srv.Shutdown(ctx)
+			shutdownOnce.Do(func() {
+				close(doneCh)
+				_ = srv.Shutdown(ctx)
+			})
 		}(shutdownCtx, shutdownCancel)
 	})
 
@@ -118,6 +123,6 @@ func openBrowser(url string) {
 		cmd = exec.Command("xdg-open", url)
 	}
 	if err := cmd.Start(); err != nil {
-		fmt.Printf("Opening: %s\n", url)
+		fmt.Printf("Could not open browser (%v). Open manually: %s\n", err, url)
 	}
 }

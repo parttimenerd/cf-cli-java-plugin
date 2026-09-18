@@ -96,7 +96,7 @@ func ensureHprofRedact() (string, error) {
 //
 // mode must be "lean" or "complete". If compress is true the output is written
 // as .hprof.gz.
-func pipeHeapDumpThroughRedact(redactBin, localPath, mode string, compress bool) (string, error) {
+func pipeHeapDumpThroughRedact(redactBin, localPath, mode string, compress bool, keepOnError bool) (string, error) {
 	base := strings.TrimSuffix(localPath, ".hprof.gz")
 	base = strings.TrimSuffix(base, ".hprof")
 	var outputPath string
@@ -116,6 +116,11 @@ func pipeHeapDumpThroughRedact(redactBin, localPath, mode string, compress bool)
 	cmd.Stderr = os.Stderr
 
 	if err := cmd.Run(); err != nil {
+		if !keepOnError {
+			if rmErr := os.Remove(outputPath); rmErr != nil && !os.IsNotExist(rmErr) {
+				fmt.Fprintf(os.Stderr, "warning: could not remove partial redacted file %s: %v\n", outputPath, rmErr)
+			}
+		}
 		return "", fmt.Errorf("hprof-redact failed: %w", err)
 	}
 

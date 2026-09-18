@@ -31,29 +31,30 @@ var _ plugin.Plugin = (*JavaPlugin)(nil)
 
 // String constants extracted to satisfy goconst linter.
 const (
-	cmdSSH             = "ssh"
-	cmdJava            = "java"
-	flagKeep           = "keep"
-	flagNoDownload     = "no-download"
-	flagContainerDir   = "container-dir"
-	flagLocalDir       = "local-dir"
-	flagRedact         = "redact"
-	flagRedactComplete = "redact-complete"
-	flagCompress       = "compress"
-	flagOpen           = "open"
-	flagOpenURL        = "open-url"
-	defaultOpenURL     = "https://parttimenerd.github.io/hprof-analyzer"
-	osWindows          = "windows"
-	cmdHeapDump        = "heap-dump"
-	typeBool           = "bool"
-	typeString         = "string"
-	toolJcmd           = "jcmd"
-	toolAsprof         = "asprof"
-	extJFR             = ".jfr"
-	labelJFR           = "JFR recording"
-	partJFR            = "jfr"
-	extHprof           = ".hprof"
-	extHprofGz         = ".hprof.gz"
+	cmdSSH                = "ssh"
+	cmdJava               = "java"
+	flagKeep              = "keep"
+	flagNoDownload        = "no-download"
+	flagContainerDir      = "container-dir"
+	flagLocalDir          = "local-dir"
+	flagRedact            = "redact"
+	flagRedactComplete    = "redact-complete"
+	flagRedactKeepOnError = "redact-keep-on-error"
+	flagCompress          = "compress"
+	flagOpen              = "open"
+	flagOpenURL           = "open-url"
+	defaultOpenURL        = "https://parttimenerd.github.io/hprof-analyzer"
+	osWindows             = "windows"
+	cmdHeapDump           = "heap-dump"
+	typeBool              = "bool"
+	typeString            = "string"
+	toolJcmd              = "jcmd"
+	toolAsprof            = "asprof"
+	extJFR                = ".jfr"
+	labelJFR              = "JFR recording"
+	partJFR               = "jfr"
+	extHprof              = ".hprof"
+	extHprofGz            = ".hprof.gz"
 )
 
 // JavaPlugin is a CF CLI plugin that supports taking heap and thread dumps on demand
@@ -208,20 +209,21 @@ func (c *JavaPlugin) checkSSHConnectivity(appName string, appInstanceIndex int) 
 
 // Options holds all command-line options for the Java plugin
 type Options struct {
-	AppInstanceIndex int
-	Keep             bool
-	NoDownload       bool
-	DryRun           bool
-	Verbose          bool
-	Full             bool
-	ContainerDir     string
-	LocalDir         string
-	Args             string
-	Redact           bool
-	RedactComplete   bool
-	Compress         bool
-	Open             bool
-	OpenURL          string
+	AppInstanceIndex  int
+	Keep              bool
+	NoDownload        bool
+	DryRun            bool
+	Verbose           bool
+	Full              bool
+	ContainerDir      string
+	LocalDir          string
+	Args              string
+	Redact            bool
+	RedactComplete    bool
+	RedactKeepOnError bool
+	Compress          bool
+	Open              bool
+	OpenURL           string
 }
 
 // FlagDefinition holds metadata for a command-line flag
@@ -311,6 +313,11 @@ var flagDefinitions = []FlagDefinition{
 		Type:  typeBool,
 	},
 	{
+		Name:  flagRedactKeepOnError,
+		Usage: "keep partially-written redacted file if redaction fails (default: delete it)",
+		Type:  typeBool,
+	},
+	{
 		Name:  flagCompress,
 		Usage: "compress heap dump on container using jmap gz=1 (JDK 17+) to reduce transfer size; output is .hprof.gz",
 		Type:  typeBool,
@@ -384,19 +391,20 @@ func (c *JavaPlugin) parseOptions(args []string) (*Options, []string, error) {
 	}
 
 	options := &Options{
-		AppInstanceIndex: appInstanceIndex,
-		Keep:             keep,
-		NoDownload:       noDownload,
-		DryRun:           commandFlags.IsSet("dry-run"),
-		Verbose:          commandFlags.IsSet("verbose"),
-		Full:             commandFlags.IsSet("full"),
-		ContainerDir:     commandFlags.String("container-dir"),
-		LocalDir:         commandFlags.String("local-dir"),
-		Args:             commandFlags.String("args"),
-		Redact:           commandFlags.IsSet(flagRedact),
-		RedactComplete:   commandFlags.IsSet(flagRedactComplete),
-		Compress:         commandFlags.IsSet(flagCompress),
-		Open:             commandFlags.IsSet(flagOpen) || commandFlags.IsSet(flagOpenURL),
+		AppInstanceIndex:  appInstanceIndex,
+		Keep:              keep,
+		NoDownload:        noDownload,
+		DryRun:            commandFlags.IsSet("dry-run"),
+		Verbose:           commandFlags.IsSet("verbose"),
+		Full:              commandFlags.IsSet("full"),
+		ContainerDir:      commandFlags.String("container-dir"),
+		LocalDir:          commandFlags.String("local-dir"),
+		Args:              commandFlags.String("args"),
+		Redact:            commandFlags.IsSet(flagRedact),
+		RedactComplete:    commandFlags.IsSet(flagRedactComplete),
+		RedactKeepOnError: commandFlags.IsSet(flagRedactKeepOnError),
+		Compress:          commandFlags.IsSet(flagCompress),
+		Open:              commandFlags.IsSet(flagOpen) || commandFlags.IsSet(flagOpenURL),
 		OpenURL: func() string {
 			if u := commandFlags.String(flagOpenURL); u != "" {
 				return u
@@ -1326,9 +1334,9 @@ func (c *JavaPlugin) execute(_ plugin.CliConnection, args []string) (string, err
 					return "", fmt.Errorf("hprof-redact unavailable: %w", rerr)
 				}
 				localIsGz := strings.HasSuffix(localFileFullPath, extHprofGz)
-				finalPath, rerr := pipeHeapDumpThroughRedact(redactBin, localFileFullPath, mode, options.Compress || localIsGz)
+				finalPath, rerr := pipeHeapDumpThroughRedact(redactBin, localFileFullPath, mode, options.Compress || localIsGz, options.RedactKeepOnError)
 				if rerr != nil {
-					return "", fmt.Errorf("redaction failed (unredacted file at %s): %w", localFileFullPath, rerr)
+					return "", fmt.Errorf("redaction failed: %w", rerr)
 				}
 				fmt.Println("Redacted heap dump saved to: " + finalPath)
 				finalLocalPath = finalPath
