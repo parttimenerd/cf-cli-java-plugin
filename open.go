@@ -26,8 +26,9 @@ import (
 // exactly once. The file is exposed under a random token path (e.g. /a3f9c2.hprof)
 // so the local filename is never leaked and only the holder of the URL can fetch it.
 // Returns the bound port, the randomised URL path segment, and a channel that
-// closes when the first GET request completes.
-func serveFileOnce(path string) (port int, urlFile string, done <-chan struct{}, err error) {
+// closes when the first GET request completes or timeout elapses.
+// timeout 0 means no timeout.
+func serveFileOnce(path string, timeout time.Duration) (port int, urlFile string, done <-chan struct{}, err error) {
 	if _, err = os.Stat(path); err != nil {
 		return 0, "", nil, fmt.Errorf("file not found: %w", err)
 	}
@@ -56,6 +57,7 @@ func serveFileOnce(path string) (port int, urlFile string, done <-chan struct{},
 	srv := &http.Server{
 		Handler:           mux,
 		ReadHeaderTimeout: 10 * time.Second,
+		WriteTimeout:      30 * time.Second,
 	}
 
 	// Register only the exact random path — any other request gets 404.
@@ -94,6 +96,24 @@ func serveFileOnce(path string) (port int, urlFile string, done <-chan struct{},
 	})
 
 	go func() { _ = srv.Serve(ln) }()
+
+	if timeout > 0 {
+		go func() {
+			timer := time.NewTimer(timeout)
+			defer timer.Stop()
+			select {
+			case <-doneCh:
+			case <-timer.C:
+				shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second) //nolint:contextcheck
+				defer shutdownCancel()
+				shutdownOnce.Do(func() {
+					fmt.Fprintf(os.Stderr, "Timed out waiting for browser to fetch heap dump; closing local server.\n")
+					close(doneCh)
+					_ = srv.Shutdown(shutdownCtx)
+				})
+			}
+		}()
+	}
 
 	return port, urlFile, doneCh, nil
 }

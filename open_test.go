@@ -11,6 +11,34 @@ import (
 	"time"
 )
 
+func TestServeFileOnce_TimeoutClosesServer(t *testing.T) {
+	tmp := t.TempDir()
+	p := filepath.Join(tmp, "test.hprof")
+	if err := os.WriteFile(p, []byte("DATA"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	port, urlFile, done, err := serveFileOnce(p, 100*time.Millisecond)
+	if err != nil {
+		t.Fatalf("serveFileOnce: %v", err)
+	}
+
+	// done must close within a reasonable time without any GET
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("done channel not closed after timeout elapsed")
+	}
+
+	// server must be gone — further requests should fail
+	url := fmt.Sprintf("http://localhost:%d/%s", port, urlFile)
+	resp, gerr := http.Get(url) //nolint:noctx,gosec
+	if gerr == nil {
+		_ = resp.Body.Close()
+		t.Error("expected connection refused after server shutdown, but got a response")
+	}
+}
+
 func TestServeFileOnce(t *testing.T) {
 	tmp := t.TempDir()
 	p := filepath.Join(tmp, "test.hprof")
@@ -18,7 +46,7 @@ func TestServeFileOnce(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	port, urlFile, done, err := serveFileOnce(p)
+	port, urlFile, done, err := serveFileOnce(p, 30*time.Second)
 	if err != nil {
 		t.Fatalf("serveFileOnce: %v", err)
 	}
@@ -73,7 +101,7 @@ func TestServeFileOnce_WrongPath404(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	port, _, _, err := serveFileOnce(p)
+	port, _, _, err := serveFileOnce(p, 30*time.Second)
 	if err != nil {
 		t.Fatalf("serveFileOnce: %v", err)
 	}
@@ -99,7 +127,7 @@ func TestServeFileOnce_GzExtension(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, urlFile, _, err := serveFileOnce(p)
+	_, urlFile, _, err := serveFileOnce(p, 30*time.Second)
 	if err != nil {
 		t.Fatalf("serveFileOnce: %v", err)
 	}
@@ -109,7 +137,7 @@ func TestServeFileOnce_GzExtension(t *testing.T) {
 }
 
 func TestServeFileOnce_MissingFile(t *testing.T) {
-	_, _, _, err := serveFileOnce("/nonexistent/path/dump.hprof")
+	_, _, _, err := serveFileOnce("/nonexistent/path/dump.hprof", 30*time.Second)
 	if err == nil {
 		t.Fatal("expected error for missing file, got nil")
 	}
@@ -122,7 +150,7 @@ func TestServeFileOnce_OptionsPreflight(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	port, urlFile, done, err := serveFileOnce(p)
+	port, urlFile, done, err := serveFileOnce(p, 30*time.Second)
 	if err != nil {
 		t.Fatalf("serveFileOnce: %v", err)
 	}
@@ -199,5 +227,44 @@ func TestBuildOpenURL_TrailingSlash(t *testing.T) {
 	url := buildOpenURL("https://example.com/analyzer/", 1234, "dump.hprof")
 	if strings.Contains(url, "//?") {
 		t.Errorf("double slash before ?: %s", url)
+	}
+}
+
+func TestServeFileOnce_ConcurrentGETsNoPanic(t *testing.T) {
+	tmp := t.TempDir()
+	p := filepath.Join(tmp, "test.hprof")
+	if err := os.WriteFile(p, []byte("CONCURRENT"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	port, urlFile, done, err := serveFileOnce(p, 30*time.Second)
+	if err != nil {
+		t.Fatalf("serveFileOnce: %v", err)
+	}
+
+	url := fmt.Sprintf("http://localhost:%d/%s", port, urlFile)
+
+	// Fire two GETs simultaneously; neither should panic and done must close exactly once.
+	errs := make(chan error, 2)
+	for range 2 {
+		go func() {
+			resp, gerr := http.Get(url) //nolint:noctx,gosec
+			if gerr == nil {
+				_, _ = io.ReadAll(resp.Body)
+				_ = resp.Body.Close()
+			}
+			errs <- gerr
+		}()
+	}
+
+	// Collect both results — one may get a connection-refused after server shuts down
+	for range 2 {
+		<-errs
+	}
+
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Error("done channel not closed after concurrent GETs")
 	}
 }

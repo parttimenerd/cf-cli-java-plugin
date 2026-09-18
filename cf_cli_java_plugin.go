@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"code.cloudfoundry.org/cli/cf/terminal"
 	"code.cloudfoundry.org/cli/cf/trace"
@@ -1343,7 +1344,7 @@ func (c *JavaPlugin) execute(_ plugin.CliConnection, args []string) (string, err
 			}
 
 			if command.Name == cmdHeapDump && options.Open {
-				port, urlFile, done, serveErr := serveFileOnce(finalLocalPath)
+				port, urlFile, done, serveErr := serveFileOnce(finalLocalPath, 10*time.Minute)
 				if serveErr != nil {
 					return "", fmt.Errorf("could not start local file server: %w", serveErr)
 				}
