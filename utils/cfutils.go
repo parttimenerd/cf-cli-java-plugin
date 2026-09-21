@@ -15,6 +15,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/lithammer/fuzzysearch/fuzzy"
 )
@@ -272,8 +273,13 @@ func StreamOverCat(args []string, src string) (io.ReadCloser, func() error, erro
 		return nil, nil, errors.New("error occurred during copying dump file: " + src + ", please try again.")
 	}
 
+	var (
+		waitOnce   sync.Once
+		waitResult error
+	)
 	wait := func() error {
-		return cat.Wait()
+		waitOnce.Do(func() { waitResult = cat.Wait() })
+		return waitResult
 	}
 
 	go func() {
