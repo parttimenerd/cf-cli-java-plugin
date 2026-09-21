@@ -39,9 +39,8 @@ func makeCopyBin(t *testing.T) string {
 	tmp := t.TempDir()
 	if runtime.GOOS == osWindows {
 		bin := filepath.Join(tmp, "fake-redact.bat")
-		// On Windows, read stdin and write to the output path argument.
-		// `more` preserves stdin content; redirect to %2.
-		script := "@echo off\r\nmore > \"%2\"\r\nexit /b 0\r\n"
+		// Use PowerShell to copy stdin in binary mode; `more` corrupts non-text bytes.
+		script := "@echo off\r\npowershell -Command \"$in=[System.Console]::OpenStandardInput();$out=[System.IO.File]::OpenWrite('%2');$in.CopyTo($out);$out.Close()\"\r\nexit /b 0\r\n"
 		if err := os.WriteFile(bin, []byte(script), 0o600); err != nil {
 			t.Fatalf("write copy bin: %v", err)
 		}
