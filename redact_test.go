@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bytes"
+	"compress/gzip"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -21,18 +23,14 @@ func makeFakeBin(t *testing.T, exitCode int) string {
 
 func TestPipeHeapDumpThroughRedact_ErrorDeletesPartial(t *testing.T) {
 	tmp := t.TempDir()
-	src := filepath.Join(tmp, "dump.hprof")
-	if err := os.WriteFile(src, []byte("FAKE"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	// Create a partial output file to simulate hprof-redact having started writing
-	partial := filepath.Join(tmp, "dump-redacted.hprof")
+	partialBase := filepath.Join(tmp, "dump.hprof")
+	partial := partialBase
 	if err := os.WriteFile(partial, []byte("PARTIAL"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
 	failBin := makeFakeBin(t, 1)
-	_, err := pipeHeapDumpThroughRedact(failBin, src, "lean", false, false)
+	_, err := pipeHeapDumpThroughRedact(failBin, bytes.NewBufferString("FAKE"), partialBase, "lean", false)
 	if err == nil {
 		t.Fatal("expected error from failing redact binary, got nil")
 	}
@@ -40,25 +38,20 @@ func TestPipeHeapDumpThroughRedact_ErrorDeletesPartial(t *testing.T) {
 	if _, statErr := os.Stat(partial); !os.IsNotExist(statErr) {
 		t.Error("partial redacted file should have been deleted on error, but still exists")
 	}
-	// source must still be present (we only delete source on success)
-	if _, statErr := os.Stat(src); statErr != nil {
-		t.Errorf("source file unexpectedly removed on error: %v", statErr)
-	}
 }
 
 func TestPipeHeapDumpThroughRedact_KeepOnError(t *testing.T) {
 	tmp := t.TempDir()
-	src := filepath.Join(tmp, "dump.hprof")
-	if err := os.WriteFile(src, []byte("FAKE"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	partial := filepath.Join(tmp, "dump-redacted.hprof")
-	if err := os.WriteFile(partial, []byte("PARTIAL"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	base := filepath.Join(tmp, "dump.hprof")
+	partial := base
 
-	failBin := makeFakeBin(t, 1)
-	_, err := pipeHeapDumpThroughRedact(failBin, src, "lean", false, true)
+	binDir := t.TempDir()
+	failBin := filepath.Join(binDir, "fake-redact")
+	script := "#!/bin/sh\necho PARTIAL > \"$2\"\nexit 1\n"
+	if err := os.WriteFile(failBin, []byte(script), 0o755); err != nil { //nolint:gosec // test binary must be executable
+		t.Fatal(err)
+	}
+	_, err := pipeHeapDumpThroughRedact(failBin, bytes.NewBufferString("FAKE"), base, "lean", true)
 	if err == nil {
 		t.Fatal("expected error from failing redact binary, got nil")
 	}
@@ -70,33 +63,78 @@ func TestPipeHeapDumpThroughRedact_KeepOnError(t *testing.T) {
 
 func TestPipeHeapDumpThroughRedact_HappyPath(t *testing.T) {
 	tmp := t.TempDir()
-	src := filepath.Join(tmp, "dump.hprof")
-	if err := os.WriteFile(src, []byte("HEAP"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	base := filepath.Join(tmp, "dump.hprof")
 
-	// Fake binary: copy input to output and exit 0
+	// Fake binary: copy stdin to output and exit 0
 	binDir := t.TempDir()
 	bin := filepath.Join(binDir, "fake-redact")
-	script := "#!/bin/sh\ncp \"$1\" \"$2\"\n"
+	script := "#!/bin/sh\ncat - > \"$2\"\n"
 	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil { //nolint:gosec // test binary must be executable
 		t.Fatal(err)
 	}
 
-	out, err := pipeHeapDumpThroughRedact(bin, src, "lean", false, false)
+	out, err := pipeHeapDumpThroughRedact(bin, bytes.NewBufferString("HEAP"), base, "lean", false)
 	if err != nil {
 		t.Fatalf("expected success, got: %v", err)
 	}
 
-	want := filepath.Join(tmp, "dump-redacted.hprof")
+	want := filepath.Join(tmp, "dump.hprof")
 	if out != want {
 		t.Errorf("output path: want %q, got %q", want, out)
 	}
 	if _, statErr := os.Stat(out); statErr != nil {
 		t.Errorf("output file missing: %v", statErr)
 	}
-	// source must be deleted on success
-	if _, statErr := os.Stat(src); !os.IsNotExist(statErr) {
-		t.Error("source file should have been deleted after successful redaction")
+	data, readErr := os.ReadFile(out) //nolint:gosec // test reads file path produced by helper under test
+	if readErr != nil {
+		t.Fatalf("read output: %v", readErr)
+	}
+	if string(data) != "HEAP" {
+		t.Fatalf("unexpected output content: %q", string(data))
+	}
+}
+
+func TestPipeHeapDumpThroughRedact_PassesCompressedInputUnchanged(t *testing.T) {
+	tmp := t.TempDir()
+	base := filepath.Join(tmp, "dump.hprof")
+
+	var compressed bytes.Buffer
+	gz := gzip.NewWriter(&compressed)
+	if _, err := gz.Write([]byte("HEAP")); err != nil {
+		t.Fatalf("gzip write: %v", err)
+	}
+	if err := gz.Close(); err != nil {
+		t.Fatalf("gzip close: %v", err)
+	}
+
+	binDir := t.TempDir()
+	bin := filepath.Join(binDir, "fake-redact")
+	script := "#!/bin/sh\ncat - > \"$2\"\n"
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil { //nolint:gosec // test binary must be executable
+		t.Fatal(err)
+	}
+
+	out, err := pipeHeapDumpThroughRedact(bin, bytes.NewReader(compressed.Bytes()), base, "lean", false)
+	if err != nil {
+		t.Fatalf("expected success, got: %v", err)
+	}
+
+	data, err := os.ReadFile(out) //nolint:gosec // test reads file path produced by helper under test
+	if err != nil {
+		t.Fatalf("read output: %v", err)
+	}
+	if !bytes.Equal(data, compressed.Bytes()) {
+		t.Fatal("compressed input was modified before reaching hprof-redact")
+	}
+}
+
+func TestPipeHeapDumpThroughRedact_RejectsUnexpectedExtension(t *testing.T) {
+	tmp := t.TempDir()
+	base := filepath.Join(tmp, "dump.bin")
+
+	bin := makeFakeBin(t, 0)
+	_, err := pipeHeapDumpThroughRedact(bin, bytes.NewBufferString("HEAP"), base, "lean", false)
+	if err == nil {
+		t.Fatal("expected unsupported extension error, got nil")
 	}
 }

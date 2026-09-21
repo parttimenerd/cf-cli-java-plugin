@@ -14,6 +14,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"runtime"
@@ -29,8 +30,12 @@ import (
 // closes when the first GET request completes or timeout elapses.
 // timeout 0 means no timeout.
 func serveFileOnce(path string, timeout time.Duration) (port int, urlFile string, done <-chan struct{}, err error) {
-	if _, err = os.Stat(path); err != nil {
-		return 0, "", nil, fmt.Errorf("file not found: %w", err)
+	info, statErr := os.Stat(path)
+	if statErr != nil {
+		return 0, "", nil, fmt.Errorf("file not found: %w", statErr)
+	}
+	if !info.Mode().IsRegular() {
+		return 0, "", nil, fmt.Errorf("path is not a regular file: %s", path)
 	}
 
 	// Build a random token + preserve only the file extension (.hprof or .hprof.gz).
@@ -44,6 +49,8 @@ func serveFileOnce(path string, timeout time.Duration) (port int, urlFile string
 		ext = extHprofGz
 	}
 	urlFile = token + ext
+	exactPath := "/" + urlFile
+	exactEscapedPath := (&url.URL{Path: exactPath}).EscapedPath()
 
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -53,47 +60,52 @@ func serveFileOnce(path string, timeout time.Duration) (port int, urlFile string
 
 	doneCh := make(chan struct{})
 	var shutdownOnce sync.Once
-	mux := http.NewServeMux()
-	srv := &http.Server{
-		Handler:           mux,
+	var srv *http.Server
+	srv = &http.Server{
+		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path != exactPath || r.URL.EscapedPath() != exactEscapedPath || r.URL.RawQuery != "" {
+				http.NotFound(w, r)
+				return
+			}
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+			// Answer CORS preflight without serving the file or triggering shutdown.
+			if r.Method == http.MethodOptions {
+				w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
+				w.WriteHeader(http.StatusNoContent)
+				return
+			}
+			if r.Method != http.MethodGet {
+				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+				return
+			}
+			f, ferr := os.Open(path) //nolint:gosec // path comes from plugin internals, not user input
+			if ferr != nil {
+				http.Error(w, "file unavailable", http.StatusInternalServerError)
+				return
+			}
+			defer func() { _ = f.Close() }()
+			w.Header().Set("Content-Type", "application/octet-stream")
+			w.WriteHeader(http.StatusOK)
+			if _, copyErr := io.Copy(w, f); copyErr != nil {
+				fmt.Fprintf(os.Stderr, "warning: failed while serving heap dump: %v\n", copyErr)
+				return
+			}
+			// Use a fresh context: r.Context() is canceled when the handler returns,
+			// but Shutdown must outlive the request.
+			// sync.Once ensures concurrent GETs can't double-close doneCh (panic).
+			shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second) //nolint:contextcheck
+			go func(ctx context.Context, cancel context.CancelFunc) {                               //nolint:contextcheck
+				defer cancel()
+				shutdownOnce.Do(func() {
+					close(doneCh)
+					_ = srv.Shutdown(ctx)
+				})
+			}(shutdownCtx, shutdownCancel)
+		}),
 		ReadHeaderTimeout: 10 * time.Second,
+		IdleTimeout:       30 * time.Second,
 		WriteTimeout:      30 * time.Second,
 	}
-
-	// Register only the exact random path — any other request gets 404.
-	mux.HandleFunc("/"+urlFile, func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		// Answer CORS preflight without serving the file or triggering shutdown.
-		if r.Method == http.MethodOptions {
-			w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
-			w.WriteHeader(http.StatusNoContent)
-			return
-		}
-		if r.Method != http.MethodGet {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-		f, ferr := os.Open(path) //nolint:gosec // path comes from plugin internals, not user input
-		if ferr != nil {
-			http.Error(w, "file unavailable", http.StatusInternalServerError)
-			return
-		}
-		defer func() { _ = f.Close() }()
-		w.Header().Set("Content-Type", "application/octet-stream")
-		w.WriteHeader(http.StatusOK)
-		_, _ = io.Copy(w, f)
-		// Use a fresh context: r.Context() is canceled when the handler returns,
-		// but Shutdown must outlive the request.
-		// sync.Once ensures concurrent GETs can't double-close doneCh (panic).
-		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second) //nolint:contextcheck
-		go func(ctx context.Context, cancel context.CancelFunc) {                               //nolint:contextcheck
-			defer cancel()
-			shutdownOnce.Do(func() {
-				close(doneCh)
-				_ = srv.Shutdown(ctx)
-			})
-		}(shutdownCtx, shutdownCancel)
-	})
 
 	go func() { _ = srv.Serve(ln) }()
 
@@ -122,12 +134,37 @@ func serveFileOnce(path string, timeout time.Duration) (port int, urlFile string
 // base is the analyzer base URL (trailing slash optional).
 // Use port=0 to produce a PORT placeholder (for dry-run output).
 func buildOpenURL(base string, port int, filename string) string {
+	hadTrailingSlash := strings.HasSuffix(base, "/")
 	base = strings.TrimRight(base, "/")
 	portStr := fmt.Sprintf("%d", port)
 	if port == 0 {
 		portStr = "PORT"
 	}
-	return fmt.Sprintf("%s/?file=http://localhost:%s/%s", base, portStr, filename)
+
+	parsedBase, err := url.Parse(base)
+	if err != nil || parsedBase.Scheme == "" || parsedBase.Host == "" {
+		return fmt.Sprintf("%s/?file=%s", base, url.QueryEscape(fmt.Sprintf("http://localhost:%s/%s", portStr, filename)))
+	}
+
+	fileURL := &url.URL{
+		Scheme: "http",
+		Host:   "localhost:" + portStr,
+		Path:   "/" + filename,
+	}
+	query := parsedBase.Query()
+	query.Set("file", fileURL.String())
+	parsedBase.RawQuery = query.Encode()
+	if hadTrailingSlash && !strings.HasSuffix(parsedBase.Path, "/") {
+		parsedBase.Path += "/"
+	}
+	if parsedBase.RawPath == "" {
+		parsedBase.RawPath = parsedBase.Path
+	}
+	if !hadTrailingSlash && parsedBase.RawQuery != "" && !strings.HasSuffix(parsedBase.Path, "/") && parsedBase.RawPath == parsedBase.Path {
+		parsedBase.Path += "/"
+		parsedBase.RawPath += "/"
+	}
+	return parsedBase.String()
 }
 
 // openBrowser opens url in the system default browser.

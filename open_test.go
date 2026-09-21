@@ -3,7 +3,9 @@ package main
 import (
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -200,19 +202,19 @@ func TestBuildOpenURL(t *testing.T) {
 			"https://parttimenerd.github.io/hprof-analyzer",
 			54321,
 			"myapp-heapdump-abc.hprof",
-			"https://parttimenerd.github.io/hprof-analyzer/?file=http://localhost:54321/myapp-heapdump-abc.hprof",
+			"https://parttimenerd.github.io/hprof-analyzer/?file=http%3A%2F%2Flocalhost%3A54321%2Fmyapp-heapdump-abc.hprof",
 		},
 		{
 			"https://parttimenerd.github.io/hprof-analyzer/",
 			9000,
 			"dump.hprof.gz",
-			"https://parttimenerd.github.io/hprof-analyzer/?file=http://localhost:9000/dump.hprof.gz",
+			"https://parttimenerd.github.io/hprof-analyzer/?file=http%3A%2F%2Flocalhost%3A9000%2Fdump.hprof.gz",
 		},
 		{
 			"https://parttimenerd.github.io/hprof-analyzer",
 			0,
 			"dump.hprof",
-			"https://parttimenerd.github.io/hprof-analyzer/?file=http://localhost:PORT/dump.hprof",
+			"https://parttimenerd.github.io/hprof-analyzer/?file=http%3A%2F%2Flocalhost%3APORT%2Fdump.hprof",
 		},
 	}
 	for _, tc := range cases {
@@ -227,6 +229,79 @@ func TestBuildOpenURL_TrailingSlash(t *testing.T) {
 	url := buildOpenURL("https://example.com/analyzer/", 1234, "dump.hprof")
 	if strings.Contains(url, "//?") {
 		t.Errorf("double slash before ?: %s", url)
+	}
+}
+
+func TestBuildOpenURL_EscapesFilenameAndPreservesExistingQuery(t *testing.T) {
+	got := buildOpenURL("https://example.com/analyzer/?theme=dark", 1234, "dump name+#1.hprof.gz")
+	want := "https://example.com/analyzer/?file=http%3A%2F%2Flocalhost%3A1234%2Fdump%2520name%2B%25231.hprof.gz&theme=dark"
+	if got != want {
+		t.Fatalf("buildOpenURL escaped URL mismatch\nwant: %s\n got: %s", want, got)
+	}
+}
+
+func TestServeFileOnce_RejectsDirectory(t *testing.T) {
+	tmp := t.TempDir()
+	_, _, _, err := serveFileOnce(tmp, time.Second)
+	if err == nil {
+		t.Fatal("expected error for directory input, got nil")
+	}
+	if !strings.Contains(err.Error(), "not a regular file") {
+		t.Fatalf("expected regular file error, got: %v", err)
+	}
+}
+
+func TestServeFileOnce_RejectsPathVariants(t *testing.T) {
+	tmp := t.TempDir()
+	p := filepath.Join(tmp, "test.hprof")
+	if err := os.WriteFile(p, []byte("SECRET"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	port, urlFile, done, err := serveFileOnce(p, 30*time.Second)
+	if err != nil {
+		t.Fatalf("serveFileOnce: %v", err)
+	}
+
+	badURLs := []string{
+		fmt.Sprintf("http://localhost:%d//%s", port, urlFile),
+		fmt.Sprintf("http://localhost:%d/%s/", port, urlFile),
+		fmt.Sprintf("http://localhost:%d/%s%%2f", port, urlFile),
+		fmt.Sprintf("http://localhost:%d/%s?extra=1", port, url.QueryEscape(urlFile)),
+	}
+
+	for _, rawURL := range badURLs {
+		resp, gerr := http.Get(rawURL) //nolint:noctx,gosec
+		if gerr != nil {
+			t.Fatalf("GET %s: %v", rawURL, gerr)
+		}
+		_ = resp.Body.Close()
+		if resp.StatusCode != http.StatusNotFound {
+			t.Fatalf("GET %s: want 404, got %d", rawURL, resp.StatusCode)
+		}
+	}
+
+	select {
+	case <-done:
+		t.Fatal("done channel closed after non-exact path variant request")
+	default:
+	}
+
+	goodURL := fmt.Sprintf("http://localhost:%d/%s", port, urlFile)
+	resp, err := http.Get(goodURL) //nolint:noctx,gosec
+	if err != nil {
+		t.Fatalf("GET %s: %v", goodURL, err)
+	}
+	_, _ = io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET %s: want 200, got %d", goodURL, resp.StatusCode)
+	}
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("done channel not closed after exact path GET")
 	}
 }
 
@@ -266,5 +341,55 @@ func TestServeFileOnce_ConcurrentGETsNoPanic(t *testing.T) {
 	case <-done:
 	case <-time.After(3 * time.Second):
 		t.Error("done channel not closed after concurrent GETs")
+	}
+}
+
+func TestServeFileOnce_ClientDisconnectDoesNotConsumeSingleServe(t *testing.T) {
+	tmp := t.TempDir()
+	p := filepath.Join(tmp, "test.hprof")
+	content := strings.Repeat("HEAP_CONTENT", 1<<14)
+	if err := os.WriteFile(p, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	port, urlFile, done, err := serveFileOnce(p, 30*time.Second)
+	if err != nil {
+		t.Fatalf("serveFileOnce: %v", err)
+	}
+
+	conn, err := net.Dial("tcp", fmt.Sprintf("127.0.0.1:%d", port))
+	if err != nil {
+		t.Fatalf("Dial: %v", err)
+	}
+	_, _ = fmt.Fprintf(conn, "GET /%s HTTP/1.1\r\nHost: localhost\r\n\r\n", urlFile)
+	_ = conn.Close()
+
+	select {
+	case <-done:
+		t.Fatal("done channel closed after client disconnected before successful transfer")
+	case <-time.After(200 * time.Millisecond):
+	}
+
+	goodURL := fmt.Sprintf("http://localhost:%d/%s", port, urlFile)
+	resp, err := http.Get(goodURL) //nolint:noctx,gosec
+	if err != nil {
+		t.Fatalf("GET %s: %v", goodURL, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("ReadAll: %v", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET %s: want 200, got %d", goodURL, resp.StatusCode)
+	}
+	if string(body) != content {
+		t.Fatalf("unexpected body length/content after retry")
+	}
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("done channel not closed after successful retry GET")
 	}
 }

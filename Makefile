@@ -38,7 +38,7 @@ endif
 # Downloaded at compile time from hprof-analyzer GitHub releases.
 # Uses musl-static Linux builds so the binary runs in CF containers without
 # glibc version constraints.
-HPROF_REDACT_BASE = https://github.com/parttimenerd/hprof-analyzer/releases/latest/download
+HPROF_REDACT_BASE = https://github.com/parttimenerd/hprof-analyzer/releases/download/nightly
 
 dist/hprof-redact-linux-amd64:
 	mkdir -p dist

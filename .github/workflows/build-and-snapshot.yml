@@ -231,9 +231,9 @@ jobs:
             ```sh
             # on Mac arm64
             cf install-plugin https://github.com/SAP/cf-cli-java-plugin/releases/download/snapshot/cf-cli-java-plugin-macos-arm64
-            # on Windows x86
+            # on Windows amd64
             cf install-plugin https://github.com/SAP/cf-cli-java-plugin/releases/download/snapshot/cf-cli-java-plugin-windows-amd64
-            # on Linux x86
+            # on Linux amd64
             cf install-plugin https://github.com/SAP/cf-cli-java-plugin/releases/download/snapshot/cf-cli-java-plugin-linux-amd64
             ```
 

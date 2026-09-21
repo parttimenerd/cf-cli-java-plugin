@@ -11,6 +11,7 @@ import (
 	_ "embed"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -90,44 +91,45 @@ func ensureHprofRedact() (string, error) {
 	return binPath, nil
 }
 
-// pipeHeapDumpThroughRedact runs hprof-redact on localPath, writing the output
-// to a new file derived from localPath. On success it deletes the original
-// unredacted file and returns the path to the redacted file.
+// pipeHeapDumpThroughRedact streams heap dump bytes through hprof-redact using
+// stdin (`hprof-redact -`) and writes only the requested output path.
 //
-// mode must be "lean" or "complete". If compress is true the output is written
-// as .hprof.gz.
-func pipeHeapDumpThroughRedact(redactBin, localPath, mode string, compress bool, keepOnError bool) (string, error) {
-	base := strings.TrimSuffix(localPath, ".hprof.gz")
-	base = strings.TrimSuffix(base, ".hprof")
-	var outputPath string
-	if compress {
-		outputPath = base + "-redacted.hprof.gz"
+// mode must be "lean" or "complete". outputBasePath must end in .hprof or .hprof.gz.
+func pipeHeapDumpThroughRedact(redactBin string, input io.Reader, outputBasePath, mode string, keepOnError bool) (string, error) {
+	if !strings.HasSuffix(outputBasePath, extHprof) && !strings.HasSuffix(outputBasePath, extHprofGz) {
+		return "", fmt.Errorf("unsupported heap dump path %q: expected %s or %s suffix", outputBasePath, extHprof, extHprofGz)
+	}
+	outputPath := outputBasePath
+
+	if err := os.MkdirAll(filepath.Dir(outputPath), 0o755); err != nil { //nolint:gosec // local output dir for plugin-managed file
+		return "", fmt.Errorf("cannot create local directory %s: %w", filepath.Dir(outputPath), err)
+	}
+
+	if _, err := os.OpenFile(outputPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600); err != nil { //nolint:gosec // plugin-constructed path
+		return "", fmt.Errorf("error creating local file at %s: %w", outputPath, err)
 	} else {
-		outputPath = base + "-redacted.hprof"
+		_ = os.Remove(outputPath)
 	}
 
 	var args []string
 	if mode == "complete" {
 		args = append(args, "--complete")
 	}
-	args = append(args, localPath, outputPath)
+	args = append(args, "-", outputPath)
 
 	cmd := exec.Command(redactBin, args...) //nolint:gosec // redactBin comes from ensureHprofRedact, not user input
+	cmd.Stdin = input
+	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
-	if err := cmd.Run(); err != nil {
+	err := cmd.Run()
+	if err != nil {
 		if !keepOnError {
 			if rmErr := os.Remove(outputPath); rmErr != nil && !os.IsNotExist(rmErr) {
 				fmt.Fprintf(os.Stderr, "warning: could not remove partial redacted file %s: %v\n", outputPath, rmErr)
 			}
 		}
 		return "", fmt.Errorf("hprof-redact failed: %w", err)
-	}
-
-	// Remove the unredacted source file
-	if err := os.Remove(localPath); err != nil {
-		// Non-fatal: redacted file is already written
-		fmt.Fprintf(os.Stderr, "warning: could not remove unredacted file %s: %v\n", localPath, err)
 	}
 
 	return outputPath, nil

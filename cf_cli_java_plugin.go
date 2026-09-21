@@ -11,6 +11,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -1305,46 +1306,58 @@ func (c *JavaPlugin) execute(_ plugin.CliConnection, args []string) (string, err
 				localFileExt = extHprofGz
 			case !remoteIsGz && options.Compress:
 				fmt.Fprintf(os.Stderr, "Warning: remote jmap does not support gz compression (JDK 17+ required); downloading uncompressed\n")
-			case remoteIsGz:
-				fmt.Println("Note: remote jmap used gz compression; decompressing during transfer...")
 			}
 		}
 
 		localFileFullPath := localDir + "/" + applicationName + "-" + command.FileNamePart + "-" + utils.GenerateUUID() + localFileExt
 		c.logVerbosef("Downloading file to: %s", localFileFullPath)
 
-		if command.Name == cmdHeapDump && remoteIsGz && localFileExt == extHprof {
-			// Transparent decompression: stream gz from remote, write plain .hprof locally
-			err = utils.CopyOverCatGunzip(cfSSHArguments, fileName, localFileFullPath)
-		} else {
-			err = utils.CopyOverCat(cfSSHArguments, fileName, localFileFullPath)
+		redactingHeapDump := command.Name == cmdHeapDump && (options.Redact || options.RedactComplete)
+		if command.Name == cmdHeapDump && remoteIsGz && localFileExt == extHprof && !redactingHeapDump {
+			fmt.Println("Note: remote jmap used gz compression; decompressing during transfer...")
 		}
 
-		if err == nil {
-			c.logVerbosef("File download completed successfully")
-			fmt.Println(utils.ToSentenceCase(command.FileLabel) + " file saved to: " + localFileFullPath)
-
-			finalLocalPath := localFileFullPath
-			if command.Name == cmdHeapDump && (options.Redact || options.RedactComplete) {
-				mode := "lean"
-				if options.RedactComplete {
-					mode = "complete"
-				}
-				redactBin, rerr := ensureHprofRedact()
-				if rerr != nil {
-					return "", fmt.Errorf("hprof-redact unavailable: %w", rerr)
-				}
-				localIsGz := strings.HasSuffix(localFileFullPath, extHprofGz)
-				finalPath, rerr := pipeHeapDumpThroughRedact(redactBin, localFileFullPath, mode, options.Compress || localIsGz, options.RedactKeepOnError)
-				if rerr != nil {
-					return "", fmt.Errorf("redaction failed: %w", rerr)
-				}
-				fmt.Println("Redacted heap dump saved to: " + finalPath)
-				finalLocalPath = finalPath
+		if redactingHeapDump {
+			mode := "lean"
+			if options.RedactComplete {
+				mode = "complete"
+			}
+			redactBin, rerr := ensureHprofRedact()
+			if rerr != nil {
+				return "", fmt.Errorf("hprof-redact unavailable: %w", rerr)
 			}
 
+			var reader io.ReadCloser
+			var waitRemote func() error
+			reader, waitRemote, err = utils.StreamOverCat(cfSSHArguments, fileName)
+			if err != nil {
+				return "", err
+			}
+
+			finalPath, rerr := pipeHeapDumpThroughRedact(redactBin, reader, localFileFullPath, mode, options.RedactKeepOnError)
+			closeErr := reader.Close()
+			waitErr := waitRemote()
+			if rerr != nil {
+				if closeErr != nil {
+					c.logVerbosef("warning: closing redaction input stream failed: %v", closeErr)
+				}
+				if waitErr != nil {
+					c.logVerbosef("warning: remote stream wait after redaction failure failed: %v", waitErr)
+				}
+				return "", fmt.Errorf("redaction failed: %w", rerr)
+			}
+			if closeErr != nil {
+				return "", fmt.Errorf("redaction input stream close failed: %w", closeErr)
+			}
+			if waitErr != nil {
+				return "", fmt.Errorf("download failed while streaming redaction input: %w", waitErr)
+			}
+
+			c.logVerbosef("Redacted heap dump stream completed successfully")
+			fmt.Println("Redacted heap dump saved to: " + finalPath)
+
 			if command.Name == cmdHeapDump && options.Open {
-				port, urlFile, done, serveErr := serveFileOnce(finalLocalPath, 10*time.Minute)
+				port, urlFile, done, serveErr := serveFileOnce(finalPath, 10*time.Minute)
 				if serveErr != nil {
 					return "", fmt.Errorf("could not start local file server: %w", serveErr)
 				}
@@ -1354,12 +1367,36 @@ func (c *JavaPlugin) execute(_ plugin.CliConnection, args []string) (string, err
 				<-done
 			}
 		} else {
-			c.logVerbosef("File download failed: %v", err)
-			fmt.Fprintf(os.Stderr, "The %s was created successfully in the container at: %s\n", command.FileLabel, fileName)
-			fmt.Fprintf(os.Stderr, "However, downloading to local failed: %v\n", err)
-			fmt.Fprintf(os.Stderr, "The remote file is still available. Retry with:\n")
-			fmt.Fprintf(os.Stderr, "  cf ssh %s -c 'cat %s' > %s\n", applicationName, fileName, localFileFullPath)
-			return "", fmt.Errorf("download failed (remote file intact): %w", err)
+			if command.Name == cmdHeapDump && remoteIsGz && localFileExt == extHprof {
+				// Transparent decompression: stream gz from remote, write plain .hprof locally
+				err = utils.CopyOverCatGunzip(cfSSHArguments, fileName, localFileFullPath)
+			} else {
+				err = utils.CopyOverCat(cfSSHArguments, fileName, localFileFullPath)
+			}
+
+			if err == nil {
+				c.logVerbosef("File download completed successfully")
+				fmt.Println(utils.ToSentenceCase(command.FileLabel) + " file saved to: " + localFileFullPath)
+
+				finalLocalPath := localFileFullPath
+				if command.Name == cmdHeapDump && options.Open {
+					port, urlFile, done, serveErr := serveFileOnce(finalLocalPath, 10*time.Minute)
+					if serveErr != nil {
+						return "", fmt.Errorf("could not start local file server: %w", serveErr)
+					}
+					openURL := buildOpenURL(options.OpenURL, port, urlFile)
+					fmt.Printf("Opening heap dump in browser: %s\n", openURL)
+					openBrowser(openURL)
+					<-done
+				}
+			} else {
+				c.logVerbosef("File download failed: %v", err)
+				fmt.Fprintf(os.Stderr, "The %s was created successfully in the container at: %s\n", command.FileLabel, fileName)
+				fmt.Fprintf(os.Stderr, "However, downloading to local failed: %v\n", err)
+				fmt.Fprintf(os.Stderr, "The remote file is still available. Retry with:\n")
+				fmt.Fprintf(os.Stderr, "  cf ssh %s -c 'cat %s' > %s\n", applicationName, fileName, localFileFullPath)
+				return "", fmt.Errorf("download failed (remote file intact): %w", err)
+			}
 		}
 
 		if !keepAfterDownload {

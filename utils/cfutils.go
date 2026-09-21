@@ -19,6 +19,14 @@ import (
 	"github.com/lithammer/fuzzysearch/fuzzy"
 )
 
+func shellSingleQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `"'"'`) + "'"
+}
+
+func remoteCatCommand(src string) string {
+	return "exec cat -- " + shellSingleQuote(src)
+}
+
 // Version represents a semantic version with major, minor, and build numbers.
 type Version struct {
 	Major int
@@ -211,7 +219,7 @@ func GetAvailablePath(data string, userpath string) (string, error) {
 	return "/tmp", nil
 }
 
-// CopyOverCat copies a remote file to a local destination using the cf ssh command and cat.
+// CopyOverCat copies a remote file to a local destination using cf ssh.
 func CopyOverCat(args []string, src string, dest string) error {
 	// Ensure parent directory exists
 	if dir := filepath.Dir(dest); dir != "" && dir != "." {
@@ -221,7 +229,7 @@ func CopyOverCat(args []string, src string, dest string) error {
 	}
 	f, err := os.OpenFile(dest, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600) //nolint:gosec // dest is a plugin-constructed output path, not user-supplied file inclusion
 	if err != nil {
-		return errors.New("Error creating local file at  " + dest + ". Please check that you are allowed to create files at the given local path.")
+		return errors.New("Error creating local file at " + dest + ". Please check that you are allowed to create files at the given local path.")
 	}
 	defer func() {
 		if closeErr := f.Close(); closeErr != nil {
@@ -230,7 +238,7 @@ func CopyOverCat(args []string, src string, dest string) error {
 		}
 	}()
 
-	args = append(args, "cat \""+src+"\"")
+	args = append(args, remoteCatCommand(src))
 	cat := exec.Command("cf", args...)
 
 	cat.Stdout = f
@@ -242,10 +250,37 @@ func CopyOverCat(args []string, src string, dest string) error {
 
 	err = cat.Wait()
 	if err != nil {
-		return errors.New("error occurred while waiting for the copying complete")
+		return errors.New("error occurred while waiting for the file copy to complete")
 	}
 
 	return nil
+}
+
+// StreamOverCat starts a remote `cat` over cf ssh and returns a reader for the
+// remote file plus a wait function that must be called after the reader is fully
+// consumed.
+func StreamOverCat(args []string, src string) (io.ReadCloser, func() error, error) {
+	pr, pw := io.Pipe()
+	catArgs := append(args, remoteCatCommand(src)) //nolint:gocritic // intentional new slice
+	cat := exec.Command("cf", catArgs...)
+	cat.Stdout = pw
+	cat.Stderr = os.Stderr
+
+	if err := cat.Start(); err != nil {
+		_ = pr.Close()
+		_ = pw.Close()
+		return nil, nil, errors.New("error occurred during copying dump file: " + src + ", please try again.")
+	}
+
+	wait := func() error {
+		return cat.Wait()
+	}
+
+	go func() {
+		_ = pw.CloseWithError(wait())
+	}()
+
+	return pr, wait, nil
 }
 
 // CopyOverCatGunzip streams a remote gzip-compressed file via cf ssh and decompresses
@@ -267,7 +302,7 @@ func CopyOverCatGunzip(args []string, src string, dest string) error {
 	}()
 
 	pr, pw := io.Pipe()
-	catArgs := append(args, "cat \""+src+"\"") //nolint:gocritic // intentional new slice
+	catArgs := append(args, remoteCatCommand(src)) //nolint:gocritic // intentional new slice
 	cat := exec.Command("cf", catArgs...)
 	cat.Stdout = pw
 

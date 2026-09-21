@@ -15,11 +15,14 @@ Currently, it allows you to:
   ([SapMachine](https://sapmachine.io) only) profiles
 - Run [jstall](https://github.com/parttimenerd/jstall) for one-shot JVM inspection (deadlock detection, hot threads,
   dependency graphs, and more): bundled directly in the plugin, requires Java 17+ locally
-- Redact heap dumps before saving to remove sensitive data (`--redact`, `--redact-complete`)
+- Redact heap dumps before saving to remove sensitive data (`--redact`, `--redact-complete`) using the bundled
+  [`hprof-redact`](https://github.com/parttimenerd/hprof-analyzer) binary from the
+  [`hprof-analyzer`](https://github.com/parttimenerd/hprof-analyzer) project
 - Automatically compress heap dump transfers over SSH on JDK 17+ containers;
   use `--compress` to keep the local file as `.hprof.gz`
-- Open heap dumps directly in the [hprof-analyzer](https://parttimenerd.github.io/hprof-analyzer) web app
-  after downloading (`--open`)
+- Open heap dumps directly in the hosted
+  [`hprof-analyzer`](https://parttimenerd.github.io/hprof-analyzer) web app after downloading (`--open`) or point the
+  plugin at another `hprof-analyzer` instance via `--open-url`
 
 ## Installation
 
@@ -44,15 +47,17 @@ Download the latest release from [GitHub](https://github.com/SAP/cf-cli-java-plu
 To install a new version of the plugin, run the following:
 
 ```sh
-# on Mac arm64
+# on Mac arm64 (Apple Silicon only)
 cf install-plugin https://github.com/SAP/cf-cli-java-plugin/releases/latest/download/cf-cli-java-plugin-macos-arm64
-# on Windows x64
+# on Windows amd64
 cf install-plugin https://github.com/SAP/cf-cli-java-plugin/releases/latest/download/cf-cli-java-plugin-windows-amd64
-# on Linux x64
+# on Linux amd64
 cf install-plugin https://github.com/SAP/cf-cli-java-plugin/releases/latest/download/cf-cli-java-plugin-linux-amd64
 # on Linux arm64
 cf install-plugin https://github.com/SAP/cf-cli-java-plugin/releases/latest/download/cf-cli-java-plugin-linux-arm64
 ```
+
+macOS plugin binaries currently require Apple Silicon; macOS Intel (`darwin/amd64`) is not supported.
 
 You can verify that the plugin is successfully installed by looking for `java` in the output of `cf plugins`.
 
@@ -64,15 +69,17 @@ This is intended for experimentation and might fail.
 To install a new version of the plugin, run the following:
 
 ```sh
-# on Mac arm64
+# on Mac arm64 (Apple Silicon only)
 cf install-plugin https://github.com/SAP/cf-cli-java-plugin/releases/download/snapshot/cf-cli-java-plugin-macos-arm64
-# on Windows x64
+# on Windows amd64
 cf install-plugin https://github.com/SAP/cf-cli-java-plugin/releases/download/snapshot/cf-cli-java-plugin-windows-amd64
-# on Linux x64
+# on Linux amd64
 cf install-plugin https://github.com/SAP/cf-cli-java-plugin/releases/download/snapshot/cf-cli-java-plugin-linux-amd64
 # on Linux arm64
 cf install-plugin https://github.com/SAP/cf-cli-java-plugin/releases/download/snapshot/cf-cli-java-plugin-linux-arm64
 ```
+
+macOS snapshot binaries currently require Apple Silicon; macOS Intel (`darwin/amd64`) is not supported.
 
 ## Common Tasks
 
@@ -224,10 +231,15 @@ cf java heap-dump $APP_NAME --open --redact --compress
 cf java heap-dump $APP_NAME --open-url http://localhost:8080
 ```
 
+The browser integration uses the [`hprof-analyzer`](https://github.com/parttimenerd/hprof-analyzer) project. By
+default, `--open` launches the hosted web app at <https://parttimenerd.github.io/hprof-analyzer>. Use `--open-url` if
+you run your own local or internal `hprof-analyzer` deployment.
+
 > **macOS note:** On macOS with the Application Firewall enabled, a dialog will appear asking
 > *"Do you want the application 'cf-cli-java-plugin' to accept incoming network connections?"*
 > Click **Allow** — the plugin binds a temporary local server on `127.0.0.1` to serve the file
-> to the browser. The server shuts down automatically after the browser fetches the file once.
+> to the browser. The server serves only the exact one-time heap-dump URL generated for that download,
+> rejects alternate paths or query parameters, and shuts down automatically after one successful fetch.
 
 Getting a thread dump:
 
@@ -359,6 +371,22 @@ cf java thread-dump [my_app] -i [my_instance_index] > thread-dump.txt
 
 The `--keep` flag is not applicable to commands that stream output directly (e.g., `thread-dump`).
 
+Heap dumps support additional local post-processing and analysis options:
+
+- `--redact`: lean redaction mode; streams the heap dump through `hprof-redact` and zeros primitive arrays such as
+  `byte[]`, `char[]`, and similar bulk buffers
+- `--redact-complete`: complete redaction mode; streams the heap dump through `hprof-redact` and zeros primitive arrays
+  and individual primitive fields
+- `--redact-keep-on-error`: keeps a partially written redacted output file if local redaction fails; otherwise failed
+  redaction leaves no local heap dump behind
+- `--compress`: keeps the local output as `.hprof.gz` instead of transparently decompressing it
+- `--open`: starts a temporary local HTTP server on `127.0.0.1`, serves the downloaded heap dump once, and opens
+  [`hprof-analyzer`](https://parttimenerd.github.io/hprof-analyzer) automatically in your browser
+- `--open-url <URL>`: same as `--open`, but targets a custom hosted or self-managed `hprof-analyzer` instance
+
+These features can be combined, for example: `cf java heap-dump APP --redact --compress --open`.
+`--open` requires a local file and therefore cannot be used with `--no-download`.
+
 ### Heap Dump Privacy
 
 Heap dumps contain the full in-memory state of a JVM, including strings, byte arrays, and field values, which can
@@ -373,11 +401,14 @@ use `--redact` or `--redact-complete` to zero out sensitive values.
 Both modes preserve the full object graph (class names, references, instance counts), so the dump remains useful for
 memory analysis. The two flags are mutually exclusive.
 
-The redacted file is saved locally with a `-redacted` suffix; the original unredacted file is deleted automatically.
+The redacted file is saved to the requested local heap-dump path with no extra suffix. When redaction is enabled, the
+heap dump is streamed directly into `hprof-redact` exactly as downloaded, including gzip-compressed `.hprof.gz`
+streams, so the unredacted dump is never written to local disk.
 Use `--redact --compress` to also compress the output (produces a `.hprof.gz`).
 
-Redaction runs locally via the bundled [hprof-redact](https://github.com/parttimenerd/hprof-analyzer) binary after
-the dump is downloaded. Supported platforms: Linux (x86_64, arm64), macOS (Apple Silicon), Windows (x86_64, arm64).
+Redaction runs locally via the bundled [hprof-redact](https://github.com/parttimenerd/hprof-analyzer) binary while the
+dump is being downloaded. The binary is embedded from the
+[`hprof-analyzer`](https://github.com/parttimenerd/hprof-analyzer) project, so no separate installation is required.
 
 ### Compressed Transfer
 
@@ -390,6 +421,17 @@ When bandwidth or container disk space is a concern, use `--compress` to transfe
 Without `--compress`, the plugin still uses `gz=1` automatically when the remote JDK supports it — the transfer is
 compressed but the local file is transparently decompressed to a plain `.hprof`. This is the default behaviour
 starting from JDK 17 and costs nothing from the user's perspective.
+
+### Opening a Heap Dump in hprof-analyzer
+
+Use `--open` to inspect the downloaded heap dump immediately in
+[`hprof-analyzer`](https://github.com/parttimenerd/hprof-analyzer), either via the hosted instance at
+<https://parttimenerd.github.io/hprof-analyzer> or via your own deployment with `--open-url`.
+
+For safety, the plugin does **not** expose an arbitrary local directory. Instead, it starts a temporary local HTTP
+server bound to `127.0.0.1`, serves only the exact generated heap-dump for that one download, rejects alternate
+paths and query parameters, and shuts the server down automatically after one successful browser fetch or after a
+timeout if the browser never connects.
 
 ## Limitations
 

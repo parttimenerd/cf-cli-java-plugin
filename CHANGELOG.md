@@ -7,6 +7,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
+### Changed
+
+- macOS plugin support now requires Apple Silicon. macOS Intel (`darwin/amd64`) is not supported.
+
 ### Added
 
 - Bundle [jstall](https://github.com/parttimenerd/jstall) (jstall-minimal.jar) for one-shot JVM inspection via
