@@ -10,6 +10,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 ### Changed
 
 - macOS plugin support now requires Apple Silicon. macOS Intel (`darwin/amd64`) is not supported.
+- Improved SSH error messages for better clarity and debugging
 
 ### Added
 
@@ -31,10 +32,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
   automatically after the browser fetches it.
 - `heap-dump --open-url <URL>`: override the hprof-analyzer base URL (e.g. a locally running instance). Implies
   `--open`.
-
-### Changed
-
-- Improved SSH error messages for better clarity and debugging
 
 ## [4.0.2]
 
