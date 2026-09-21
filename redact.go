@@ -10,6 +10,7 @@ import (
 	"crypto/sha256"
 	_ "embed"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -133,4 +134,27 @@ func pipeHeapDumpThroughRedact(redactBin string, input io.Reader, outputBasePath
 	}
 
 	return outputPath, nil
+}
+
+func combineHeapDumpStreamErrors(redactErr, closeErr, waitErr error) error {
+	parts := make([]string, 0, 3)
+	joined := make([]error, 0, 3)
+
+	if redactErr != nil {
+		parts = append(parts, "redaction failed")
+		joined = append(joined, redactErr)
+	}
+	if closeErr != nil {
+		parts = append(parts, "closing redaction input stream failed")
+		joined = append(joined, closeErr)
+	}
+	if waitErr != nil {
+		parts = append(parts, "remote heap dump stream failed")
+		joined = append(joined, waitErr)
+	}
+	if len(joined) == 0 {
+		return nil
+	}
+
+	return fmt.Errorf("%s: %w", strings.Join(parts, "; "), errors.Join(joined...))
 }

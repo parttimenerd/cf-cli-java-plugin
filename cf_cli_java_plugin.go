@@ -1338,19 +1338,10 @@ func (c *JavaPlugin) execute(_ plugin.CliConnection, args []string) (string, err
 			closeErr := reader.Close()
 			waitErr := waitRemote()
 			if rerr != nil {
-				if closeErr != nil {
-					c.logVerbosef("warning: closing redaction input stream failed: %v", closeErr)
-				}
-				if waitErr != nil {
-					c.logVerbosef("warning: remote stream wait after redaction failure failed: %v", waitErr)
-				}
-				return "", fmt.Errorf("redaction failed: %w", rerr)
+				return "", combineHeapDumpStreamErrors(rerr, closeErr, waitErr)
 			}
-			if closeErr != nil {
-				return "", fmt.Errorf("redaction input stream close failed: %w", closeErr)
-			}
-			if waitErr != nil {
-				return "", fmt.Errorf("download failed while streaming redaction input: %w", waitErr)
+			if combinedErr := combineHeapDumpStreamErrors(nil, closeErr, waitErr); combinedErr != nil {
+				return "", combinedErr
 			}
 
 			c.logVerbosef("Redacted heap dump stream completed successfully")

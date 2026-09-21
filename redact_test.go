@@ -3,9 +3,11 @@ package main
 import (
 	"bytes"
 	"compress/gzip"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -136,5 +138,39 @@ func TestPipeHeapDumpThroughRedact_RejectsUnexpectedExtension(t *testing.T) {
 	_, err := pipeHeapDumpThroughRedact(bin, bytes.NewBufferString("HEAP"), base, "lean", false)
 	if err == nil {
 		t.Fatal("expected unsupported extension error, got nil")
+	}
+}
+
+func TestCombineHeapDumpStreamErrors(t *testing.T) {
+	redactErr := errors.New("redact boom")
+	closeErr := errors.New("close boom")
+	waitErr := errors.New("wait boom")
+
+	err := combineHeapDumpStreamErrors(redactErr, closeErr, waitErr)
+	if err == nil {
+		t.Fatal("expected combined error, got nil")
+	}
+
+	for _, want := range []string{
+		"redaction failed",
+		"closing redaction input stream failed",
+		"remote heap dump stream failed",
+		"redact boom",
+		"close boom",
+		"wait boom",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("expected combined error to contain %q, got %q", want, err.Error())
+		}
+	}
+
+	if !errors.Is(err, redactErr) || !errors.Is(err, closeErr) || !errors.Is(err, waitErr) {
+		t.Fatal("expected combined error to match all component errors via errors.Is")
+	}
+}
+
+func TestCombineHeapDumpStreamErrors_NilWhenNoErrors(t *testing.T) {
+	if err := combineHeapDumpStreamErrors(nil, nil, nil); err != nil {
+		t.Fatalf("expected nil, got %v", err)
 	}
 }
