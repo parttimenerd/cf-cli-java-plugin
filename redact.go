@@ -106,9 +106,11 @@ func pipeHeapDumpThroughRedact(redactBin string, input io.Reader, outputBasePath
 		return "", fmt.Errorf("cannot create local directory %s: %w", filepath.Dir(outputPath), err)
 	}
 
-	if _, err := os.OpenFile(outputPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600); err != nil { //nolint:gosec // plugin-constructed path
+	// Pre-check write access; close immediately so Windows doesn't hold a lock.
+	if f, err := os.OpenFile(outputPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600); err != nil { //nolint:gosec // plugin-constructed path
 		return "", fmt.Errorf("error creating local file at %s: %w", outputPath, err)
 	} else {
+		_ = f.Close()
 		_ = os.Remove(outputPath)
 	}
 

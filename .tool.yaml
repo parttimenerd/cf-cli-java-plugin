@@ -119,7 +119,7 @@ how_to:
     cf java heap-dump $APP_NAME --open
     # Spins up a local server and opens hprof-analyzer in the browser automatically.
     # On macOS with the Application Firewall enabled, click Allow when prompted.
-    # In Firefox, allow the page to access local services when prompted.
+    # In the browsers, allow the page to access local services when prompted.
     ```
     To remove sensitive data (passwords, tokens) before saving:
     ```bash
@@ -244,7 +244,7 @@ how_to:
     **macOS:** if the Application Firewall is enabled, click **Allow** when asked whether
     `cf-cli-java-plugin` may accept incoming network connections.
 
-    **Firefox:** click **Allow** when the browser asks for permission to access local services.
+    **Browsers:** click **Allow** when the browser asks for permission to access local services.
 
     To use a locally running hprof-analyzer instance instead of the hosted one:
     ```bash

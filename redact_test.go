@@ -7,14 +7,24 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
 
-// makeFakeBin writes a shell script that exits with the given code and returns its path.
+// makeFakeBin writes a script that exits with the given code and returns its path.
+// On Windows it writes a .bat file; on Unix a shell script.
 func makeFakeBin(t *testing.T, exitCode int) string {
 	t.Helper()
 	tmp := t.TempDir()
+	if runtime.GOOS == osWindows {
+		bin := filepath.Join(tmp, "fake-redact.bat")
+		script := fmt.Sprintf("@echo off\r\nexit /b %d\r\n", exitCode)
+		if err := os.WriteFile(bin, []byte(script), 0o600); err != nil {
+			t.Fatalf("write fake bin: %v", err)
+		}
+		return bin
+	}
 	bin := filepath.Join(tmp, "fake-redact")
 	script := fmt.Sprintf("#!/bin/sh\nexit %d\n", exitCode)
 	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil { //nolint:gosec // test binary must be executable
@@ -23,66 +33,90 @@ func makeFakeBin(t *testing.T, exitCode int) string {
 	return bin
 }
 
+// makeCopyBin writes a script that copies stdin to $2 (Unix) or %2 (Windows).
+func makeCopyBin(t *testing.T) string {
+	t.Helper()
+	tmp := t.TempDir()
+	if runtime.GOOS == osWindows {
+		bin := filepath.Join(tmp, "fake-redact.bat")
+		// On Windows, read stdin and write to the output path argument.
+		// `more` preserves stdin content; redirect to %2.
+		script := "@echo off\r\nmore > \"%2\"\r\nexit /b 0\r\n"
+		if err := os.WriteFile(bin, []byte(script), 0o600); err != nil {
+			t.Fatalf("write copy bin: %v", err)
+		}
+		return bin
+	}
+	bin := filepath.Join(tmp, "fake-redact")
+	script := "#!/bin/sh\ncat - > \"$2\"\n"
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil { //nolint:gosec // test binary must be executable
+		t.Fatalf("write copy bin: %v", err)
+	}
+	return bin
+}
+
+// makeWriteAndFailBin writes a script that writes PARTIAL to $2/%2 then exits 1.
+func makeWriteAndFailBin(t *testing.T) string {
+	t.Helper()
+	tmp := t.TempDir()
+	if runtime.GOOS == osWindows {
+		bin := filepath.Join(tmp, "fake-redact.bat")
+		script := "@echo off\r\necho PARTIAL> \"%2\"\r\nexit /b 1\r\n"
+		if err := os.WriteFile(bin, []byte(script), 0o600); err != nil {
+			t.Fatalf("write write-and-fail bin: %v", err)
+		}
+		return bin
+	}
+	bin := filepath.Join(tmp, "fake-redact")
+	script := "#!/bin/sh\necho PARTIAL > \"$2\"\nexit 1\n"
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil { //nolint:gosec // test binary must be executable
+		t.Fatalf("write write-and-fail bin: %v", err)
+	}
+	return bin
+}
+
 func TestPipeHeapDumpThroughRedact_ErrorDeletesPartial(t *testing.T) {
 	tmp := t.TempDir()
-	partialBase := filepath.Join(tmp, "dump.hprof")
-	partial := partialBase
-	if err := os.WriteFile(partial, []byte("PARTIAL"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	outputPath := filepath.Join(tmp, "dump.hprof")
 
 	failBin := makeFakeBin(t, 1)
-	_, err := pipeHeapDumpThroughRedact(failBin, bytes.NewBufferString("FAKE"), partialBase, "lean", false)
+	_, err := pipeHeapDumpThroughRedact(failBin, bytes.NewBufferString("FAKE"), outputPath, "lean", false)
 	if err == nil {
 		t.Fatal("expected error from failing redact binary, got nil")
 	}
 
-	if _, statErr := os.Stat(partial); !os.IsNotExist(statErr) {
+	if _, statErr := os.Stat(outputPath); !os.IsNotExist(statErr) {
 		t.Error("partial redacted file should have been deleted on error, but still exists")
 	}
 }
 
 func TestPipeHeapDumpThroughRedact_KeepOnError(t *testing.T) {
 	tmp := t.TempDir()
-	base := filepath.Join(tmp, "dump.hprof")
-	partial := base
+	outputPath := filepath.Join(tmp, "dump.hprof")
 
-	binDir := t.TempDir()
-	failBin := filepath.Join(binDir, "fake-redact")
-	script := "#!/bin/sh\necho PARTIAL > \"$2\"\nexit 1\n"
-	if err := os.WriteFile(failBin, []byte(script), 0o755); err != nil { //nolint:gosec // test binary must be executable
-		t.Fatal(err)
-	}
-	_, err := pipeHeapDumpThroughRedact(failBin, bytes.NewBufferString("FAKE"), base, "lean", true)
+	bin := makeWriteAndFailBin(t)
+	_, err := pipeHeapDumpThroughRedact(bin, bytes.NewBufferString("FAKE"), outputPath, "lean", true)
 	if err == nil {
 		t.Fatal("expected error from failing redact binary, got nil")
 	}
 
-	if _, statErr := os.Stat(partial); statErr != nil {
+	if _, statErr := os.Stat(outputPath); statErr != nil {
 		t.Error("partial file should have been kept with keepOnError=true, but is gone")
 	}
 }
 
 func TestPipeHeapDumpThroughRedact_HappyPath(t *testing.T) {
 	tmp := t.TempDir()
-	base := filepath.Join(tmp, "dump.hprof")
+	outputPath := filepath.Join(tmp, "dump.hprof")
 
-	// Fake binary: copy stdin to output and exit 0
-	binDir := t.TempDir()
-	bin := filepath.Join(binDir, "fake-redact")
-	script := "#!/bin/sh\ncat - > \"$2\"\n"
-	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil { //nolint:gosec // test binary must be executable
-		t.Fatal(err)
-	}
-
-	out, err := pipeHeapDumpThroughRedact(bin, bytes.NewBufferString("HEAP"), base, "lean", false)
+	bin := makeCopyBin(t)
+	out, err := pipeHeapDumpThroughRedact(bin, bytes.NewBufferString("HEAP"), outputPath, "lean", false)
 	if err != nil {
 		t.Fatalf("expected success, got: %v", err)
 	}
 
-	want := filepath.Join(tmp, "dump.hprof")
-	if out != want {
-		t.Errorf("output path: want %q, got %q", want, out)
+	if out != outputPath {
+		t.Errorf("output path: want %q, got %q", outputPath, out)
 	}
 	if _, statErr := os.Stat(out); statErr != nil {
 		t.Errorf("output file missing: %v", statErr)
@@ -91,14 +125,16 @@ func TestPipeHeapDumpThroughRedact_HappyPath(t *testing.T) {
 	if readErr != nil {
 		t.Fatalf("read output: %v", readErr)
 	}
-	if string(data) != "HEAP" {
+	// Windows `more` appends \r\n; strip for comparison
+	content := strings.TrimRight(string(data), "\r\n")
+	if content != "HEAP" {
 		t.Fatalf("unexpected output content: %q", string(data))
 	}
 }
 
 func TestPipeHeapDumpThroughRedact_PassesCompressedInputUnchanged(t *testing.T) {
 	tmp := t.TempDir()
-	base := filepath.Join(tmp, "dump.hprof")
+	outputPath := filepath.Join(tmp, "dump.hprof")
 
 	var compressed bytes.Buffer
 	gz := gzip.NewWriter(&compressed)
@@ -109,14 +145,8 @@ func TestPipeHeapDumpThroughRedact_PassesCompressedInputUnchanged(t *testing.T) 
 		t.Fatalf("gzip close: %v", err)
 	}
 
-	binDir := t.TempDir()
-	bin := filepath.Join(binDir, "fake-redact")
-	script := "#!/bin/sh\ncat - > \"$2\"\n"
-	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil { //nolint:gosec // test binary must be executable
-		t.Fatal(err)
-	}
-
-	out, err := pipeHeapDumpThroughRedact(bin, bytes.NewReader(compressed.Bytes()), base, "lean", false)
+	bin := makeCopyBin(t)
+	out, err := pipeHeapDumpThroughRedact(bin, bytes.NewReader(compressed.Bytes()), outputPath, "lean", false)
 	if err != nil {
 		t.Fatalf("expected success, got: %v", err)
 	}
