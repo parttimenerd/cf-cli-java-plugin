@@ -190,17 +190,14 @@ func (c *JavaPlugin) executeJstall(appName string, jstallArgs string, appInstanc
 
 	args := []string{"-jar", jarPath}
 
-	// Build SSH command with PATH setup so jps/jcmd are discoverable on remote container
-	// SAP Java Buildpack puts JDK tools at deep paths not on $PATH
-	pathSetup := `JDK_BIN=$(dirname "$(find . -executable -name jps 2>/dev/null | head -1)" 2>/dev/null); if [ -n "$JDK_BIN" ]; then export PATH="$JDK_BIN:$PATH"; fi;`
-	// Shell-quote appName to prevent command injection via a maliciously named CF app.
-	sshCmd := "cf ssh " + shellQuote(appName)
+	// Use --cf for the simple case; --ssh when an instance index is needed
+	// (jstall's --cf shortcut doesn't support --app-instance-index).
 	if appInstanceIndex != -1 {
-		sshCmd += " --app-instance-index " + strconv.Itoa(appInstanceIndex)
+		sshCmd := "cf ssh " + shellQuote(appName) + " --app-instance-index " + strconv.Itoa(appInstanceIndex) + " -c"
+		args = append(args, "--ssh", sshCmd)
+	} else {
+		args = append(args, "--cf", appName)
 	}
-	sshCmd += " -c"
-	args = append(args, "--ssh", sshCmd)
-	args = append(args, "--ssh-prefix", pathSetup)
 
 	if jstallArgs != "" {
 		splitArgs, err := shlex.Split(jstallArgs)

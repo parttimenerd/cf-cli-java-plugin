@@ -305,34 +305,40 @@ var flagDefinitions = []FlagDefinition{
 		Type:        typeString,
 	},
 	{
-		Name:  flagRedact,
-		Usage: "redact heap dump (lean mode: zero primitive arrays only) before saving locally",
-		Type:  typeBool,
+		Name:        flagRedact,
+		Usage:       "redact heap dump (lean mode: zero primitive arrays only) before saving locally",
+		Description: "redact heap dump before saving locally (lean mode: zero primitive arrays only)",
+		Type:        typeBool,
 	},
 	{
-		Name:  flagRedactComplete,
-		Usage: "redact heap dump (complete mode: zero all primitive values) before saving locally",
-		Type:  typeBool,
+		Name:        flagRedactComplete,
+		Usage:       "redact heap dump (complete mode: zero all primitive values) before saving locally",
+		Description: "redact heap dump before saving locally (complete mode: zero all primitive values)",
+		Type:        typeBool,
 	},
 	{
-		Name:  flagRedactKeepOnError,
-		Usage: "keep partially-written redacted file if redaction fails (default: delete it)",
-		Type:  typeBool,
+		Name:        flagRedactKeepOnError,
+		Usage:       "keep partially-written redacted file if redaction fails (default: delete it)",
+		Description: "keep partially-written redacted file if redaction fails (default: delete it)",
+		Type:        typeBool,
 	},
 	{
-		Name:  flagCompress,
-		Usage: "compress heap dump on container using jmap gz=1 (JDK 17+) to reduce transfer size; output is .hprof.gz",
-		Type:  typeBool,
+		Name:        flagCompress,
+		Usage:       "compress heap dump on container using jmap gz=1 (JDK 17+) to reduce transfer size; output is .hprof.gz",
+		Description: "compress heap dump on the container before downloading (JDK 17+, reduces transfer size); output file will be .hprof.gz",
+		Type:        typeBool,
 	},
 	{
-		Name:  flagOpen,
-		Usage: "open the heap dump in the hprof-analyzer web app after downloading",
-		Type:  typeBool,
+		Name:        flagOpen,
+		Usage:       "open the heap dump in the hprof-analyzer web app after downloading",
+		Description: "open the heap dump in the hprof-analyzer web app after downloading",
+		Type:        typeBool,
 	},
 	{
-		Name:  flagOpenURL,
-		Usage: "base URL of the hprof-analyzer instance to open (implies --open)",
-		Type:  typeString,
+		Name:        flagOpenURL,
+		Usage:       "base URL of the hprof-analyzer instance to open (implies --open)",
+		Description: "base URL of the hprof-analyzer instance to open (implies --open)",
+		Type:        typeString,
 	},
 }
 
@@ -436,12 +442,14 @@ func (c *JavaPlugin) generateOptionsMapFromFlags() map[string]string {
 
 	// Generate options from the centralized flag definitions
 	for _, flagDef := range flagDefinitions {
-		// Create the prefix for the flag (short name with appropriate formatting)
-		prefix := "-" + flagDef.ShortName
-		if flagDef.Name == "app-instance-index" {
-			prefix += " [index]"
+		var prefix string
+		if flagDef.ShortName != "" {
+			prefix = "-" + flagDef.ShortName
+			if flagDef.Name == "app-instance-index" {
+				prefix += " [index]"
+			}
+			prefix += ", "
 		}
-		prefix += ", "
 
 		// Use the Description field for detailed help text
 		options[flagDef.Name] = utils.WrapTextWithPrefix(flagDef.Description, prefix, 80, 27)
