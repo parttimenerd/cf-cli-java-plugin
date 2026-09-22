@@ -190,14 +190,14 @@ func (c *JavaPlugin) executeJstall(appName string, jstallArgs string, appInstanc
 
 	args := []string{"-jar", jarPath}
 
-	// Use --cf for the simple case; --ssh when an instance index is needed
-	// (jstall's --cf shortcut doesn't support --app-instance-index).
+	// Always use --ssh so jstall doesn't try to wrap the command in `sh -c` internally
+	// (--cf uses a shell wrapper that breaks on Windows).
+	sshCmd := "cf ssh " + shellQuote(appName)
 	if appInstanceIndex != -1 {
-		sshCmd := "cf ssh " + shellQuote(appName) + " --app-instance-index " + strconv.Itoa(appInstanceIndex) + " -c"
-		args = append(args, "--ssh", sshCmd)
-	} else {
-		args = append(args, "--cf", appName)
+		sshCmd += " --app-instance-index " + strconv.Itoa(appInstanceIndex)
 	}
+	sshCmd += " -c"
+	args = append(args, "--ssh", sshCmd)
 
 	if jstallArgs != "" {
 		splitArgs, err := shlex.Split(jstallArgs)

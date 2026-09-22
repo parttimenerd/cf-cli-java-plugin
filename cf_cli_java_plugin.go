@@ -451,8 +451,14 @@ func (c *JavaPlugin) generateOptionsMapFromFlags() map[string]string {
 			prefix += ", "
 		}
 
-		// Use the Description field for detailed help text
-		options[flagDef.Name] = utils.WrapTextWithPrefix(flagDef.Description, prefix, 80, 27)
+		// Use the Description field for detailed help text.
+		// miscLineIndent aligns continuation lines: prefix + indent must equal the
+		// widest prefix used ("-i [index], " = 12 chars, indent 19 → total 31).
+		indent := 31 - len(prefix)
+		if indent < 0 {
+			indent = 0
+		}
+		options[flagDef.Name] = utils.WrapTextWithPrefix(flagDef.Description, prefix, 80, indent)
 	}
 
 	return options
