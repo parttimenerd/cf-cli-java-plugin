@@ -170,11 +170,6 @@ func formatCommandForDisplay(command string, args []string) string {
 	return command + " " + strings.Join(displayArgs, " ")
 }
 
-// shellQuote wraps s in single quotes, escaping any single quotes within.
-func shellQuote(s string) string {
-	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
-}
-
 func (c *JavaPlugin) executeJstall(appName string, jstallArgs string, appInstanceIndex int, dryRun bool) (string, error) {
 	javaPath, err := findJava17Plus()
 	if err != nil {
@@ -190,14 +185,15 @@ func (c *JavaPlugin) executeJstall(appName string, jstallArgs string, appInstanc
 
 	args := []string{"-jar", jarPath}
 
-	// Always use --ssh so jstall doesn't try to wrap the command in `sh -c` internally
-	// (--cf uses a shell wrapper that breaks on Windows).
-	sshCmd := "cf ssh " + shellQuote(appName)
+	// Use --cf which jstall translates to "cf ssh <app> -c" internally via ProcessBuilder
+	// (no sh -c wrapper since v0.7.2, so this works on Windows too).
+	// For instance index, fall back to --ssh since --cf doesn't support it.
 	if appInstanceIndex != -1 {
-		sshCmd += " --app-instance-index " + strconv.Itoa(appInstanceIndex)
+		sshCmd := "cf ssh " + appName + " --app-instance-index " + strconv.Itoa(appInstanceIndex) + " -c"
+		args = append(args, "--ssh", sshCmd)
+	} else {
+		args = append(args, "--cf", appName)
 	}
-	sshCmd += " -c"
-	args = append(args, "--ssh", sshCmd)
 
 	if jstallArgs != "" {
 		splitArgs, err := shlex.Split(jstallArgs)
