@@ -158,6 +158,44 @@ jobs:
         shell: bash
         run: python3 .github/workflows/build.py
 
+      - name: Install CF CLI
+        shell: bash
+        run: |
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            choco install cloudfoundry-cli -y --no-progress
+          elif [[ "$RUNNER_OS" == "macOS" ]]; then
+            brew install cloudfoundry/tap/cf-cli@8
+          else
+            curl -fsSL "https://packages.cloudfoundry.org/stable?release=linux64-binary&version=v8&source=github" | tar -xz cf8
+            sudo mv cf8 /usr/local/bin/cf
+          fi
+          cf version
+
+      - name: Install plugin and smoke-test jstall on Windows
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          # Install the freshly built plugin
+          plugin_bin=$(ls dist/cf-cli-java-plugin-windows-* | head -1)
+          cf install-plugin "$plugin_bin" -f
+
+          # Run cf java status — we are not logged in so jstall will fail,
+          # but the error must come from CF (auth/SSH), NOT from "sh not found"
+          # or "unknown flag" which would indicate a Windows invocation bug.
+          output=$(cf java status fake-app 2>&1 || true)
+          echo "Output: $output"
+
+          # Verify the command reached jstall and CF (auth error expected)
+          if echo "$output" | grep -qiE "sh.*not found|CreateProcess|unknown flag|allowAmbiguous"; then
+            echo "FAIL: Windows invocation bug detected: $output"
+            exit 1
+          fi
+          if echo "$output" | grep -qiE "login|token|SSH|authenticate|FAILED|JVM|Cannot connect"; then
+            echo "OK: jstall reached CF as expected (auth/SSH error is normal in CI)"
+          else
+            echo "WARN: Unexpected output, but no known Windows bug detected: $output"
+          fi
+
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
