@@ -172,17 +172,18 @@ jobs:
           plugin_bin=$(ls dist/cf-cli-java-plugin-windows-* | head -1)
           cf install-plugin "$plugin_bin" -f
 
-          # Run cf java status — not logged in so jstall will fail,
-          # but the error must come from CF (auth/SSH), NOT from a Windows
-          # invocation bug ("sh not found", "unknown flag", etc.).
+          # Run cf java status — not logged in so CF will respond with an auth
+          # error. That means jstall successfully invoked cf.exe via ProcessBuilder.
+          # Any Windows invocation bug (sh not found, unknown flag, etc.) would
+          # produce a different error and fail this check.
           output=$(cf java status fake-app 2>&1 || true)
           echo "Output: $output"
 
-          if echo "$output" | grep -qiE "sh.*not found|CreateProcess|unknown flag|allowAmbiguous"; then
-            echo "FAIL: Windows invocation bug detected"
+          if ! echo "$output" | grep -qiE "not logged in|login|token|authenticate"; then
+            echo "FAIL: expected CF auth error, got: $output"
             exit 1
           fi
-          echo "OK: no Windows invocation bug detected"
+          echo "OK: jstall reached CF as expected"
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
