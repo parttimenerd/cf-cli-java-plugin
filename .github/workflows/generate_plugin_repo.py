@@ -73,7 +73,7 @@ def generate_plugin_repo_yaml(version: str):
     
     # Write the YAML file
     output_file = Path("plugin-repo-entry.yml")
-    yaml_content = yaml.dump(plugin_entry, default_flow_style=False, sort_keys=False).replace('"', "'")
+    yaml_content = yaml.dump(plugin_entry, default_flow_style=False, sort_keys=False)
     with open(output_file, 'w') as f:
         f.write(yaml_content)
     
